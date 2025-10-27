@@ -35,6 +35,19 @@ protocol TransactionEncoder {
         memoBytes: MemoBytes?
     ) async throws -> Proposal
 
+    /// Creates a proposal for transferring funds to the given recipients.
+    ///
+    /// - Parameter accountUUID: UUID of the account to spend from
+    /// - Parameter paymentOutputs: array of payment outputs, each containing recipient address,
+    ///   amount in Zatoshi, and optional memo. Pass `nil` memo when sending to transparent receivers
+    ///
+    /// If `prepare()` hasn't already been called since creation of the synchronizer instance or since the last wipe then this method throws
+    /// `SynchronizerErrors.notPrepared`.
+    func proposeTransfer(
+        accountUUID: AccountUUID,
+        paymentOutputs: [PaymentOutput]
+    ) async throws -> Proposal
+    
     /// Creates a proposal for shielding any transparent funds received by the given account.
     ///
     /// - Parameter accountUUID:the account from which to shield funds.

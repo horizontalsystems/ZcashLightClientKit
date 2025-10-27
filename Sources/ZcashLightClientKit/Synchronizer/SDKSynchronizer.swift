@@ -385,6 +385,33 @@ public class SDKSynchronizer: Synchronizer {
         return proposal
     }
 
+    public func proposeTransfer(accountUUID: AccountUUID, proposalOutputs: [ProposalOutput]) async throws -> Proposal {
+        try throwIfUnprepared()
+        
+        // Validate that transparent recipients don't have memos
+        for output in proposalOutputs {
+            if case .transparent = output.recipient, output.memo != nil {
+                throw ZcashError.synchronizerSendMemoToTransparentAddress
+            }
+        }
+        
+        // Convert ProposalOutput to PaymentOutput for the backend
+        let paymentOutputs = try proposalOutputs.map { output in
+            PaymentOutput(
+                address: output.recipient.stringEncoded,
+                value: output.amount.amount,
+                memo: try output.memo?.asMemoBytes()
+            )
+        }
+        
+        let proposal = try await transactionEncoder.proposeTransfer(
+            accountUUID: accountUUID,
+            paymentOutputs: paymentOutputs
+        )
+        
+        return proposal
+    }
+
     public func proposeShielding(
         accountUUID: AccountUUID,
         shieldingThreshold: Zatoshi,

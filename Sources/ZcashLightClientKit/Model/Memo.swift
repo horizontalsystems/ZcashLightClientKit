@@ -99,7 +99,7 @@ public struct MemoText: Equatable {
     }
 }
 
-public struct MemoBytes: Equatable {
+public struct MemoBytes: Equatable, Hashable {
     public enum Errors: Error {
         /// Invalid UTF-8 Bytes where detected when attempting to create a Text Memo
         case invalidUTF8

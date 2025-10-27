@@ -77,6 +77,18 @@ class WalletTransactionEncoder: TransactionEncoder {
         return Proposal(inner: proposal)
     }
 
+    func proposeTransfer(
+        accountUUID: AccountUUID,
+        paymentOutputs: [PaymentOutput]
+    ) async throws -> Proposal {
+        let proposal = try await rustBackend.proposeTransfer(
+            accountUUID: accountUUID,
+            paymentOutputs: paymentOutputs
+        )
+
+        return Proposal(inner: proposal)
+    }
+
     func proposeShielding(
         accountUUID: AccountUUID,
         shieldingThreshold: Zatoshi,

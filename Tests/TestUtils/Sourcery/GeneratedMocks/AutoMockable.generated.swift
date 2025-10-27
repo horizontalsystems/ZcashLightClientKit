@@ -1586,6 +1586,30 @@ class SynchronizerMock: Synchronizer {
         }
     }
 
+    // MARK: - proposeTransfer
+
+    var proposeTransferAccountUUIDProposalOutputsThrowableError: Error?
+    var proposeTransferAccountUUIDProposalOutputsCallsCount = 0
+    var proposeTransferAccountUUIDProposalOutputsCalled: Bool {
+        return proposeTransferAccountUUIDProposalOutputsCallsCount > 0
+    }
+    var proposeTransferAccountUUIDProposalOutputsReceivedArguments: (accountUUID: AccountUUID, proposalOutputs: [ProposalOutput])?
+    var proposeTransferAccountUUIDProposalOutputsReturnValue: Proposal!
+    var proposeTransferAccountUUIDProposalOutputsClosure: ((AccountUUID, [ProposalOutput]) async throws -> Proposal)?
+
+    func proposeTransfer(accountUUID: AccountUUID, proposalOutputs: [ProposalOutput]) async throws -> Proposal {
+        if let error = proposeTransferAccountUUIDProposalOutputsThrowableError {
+            throw error
+        }
+        proposeTransferAccountUUIDProposalOutputsCallsCount += 1
+        proposeTransferAccountUUIDProposalOutputsReceivedArguments = (accountUUID: accountUUID, proposalOutputs: proposalOutputs)
+        if let closure = proposeTransferAccountUUIDProposalOutputsClosure {
+            return try await closure(accountUUID, proposalOutputs)
+        } else {
+            return proposeTransferAccountUUIDProposalOutputsReturnValue
+        }
+    }
+
     // MARK: - proposeShielding
 
     var proposeShieldingAccountUUIDShieldingThresholdMemoTransparentReceiverThrowableError: Error?
@@ -3302,6 +3326,30 @@ class ZcashRustBackendWeldingMock: ZcashRustBackendWelding {
             return try await closure(accountUUID, address, value, memo)
         } else {
             return proposeTransferAccountUUIDToValueMemoReturnValue
+        }
+    }
+
+    // MARK: - proposeTransfer
+
+    var proposeTransferAccountUUIDPaymentOutputsThrowableError: Error?
+    var proposeTransferAccountUUIDPaymentOutputsCallsCount = 0
+    var proposeTransferAccountUUIDPaymentOutputsCalled: Bool {
+        return proposeTransferAccountUUIDPaymentOutputsCallsCount > 0
+    }
+    var proposeTransferAccountUUIDPaymentOutputsReceivedArguments: (accountUUID: AccountUUID, paymentOutputs: [PaymentOutput])?
+    var proposeTransferAccountUUIDPaymentOutputsReturnValue: FfiProposal!
+    var proposeTransferAccountUUIDPaymentOutputsClosure: ((AccountUUID, [PaymentOutput]) async throws -> FfiProposal)?
+
+    func proposeTransfer(accountUUID: AccountUUID, paymentOutputs: [PaymentOutput]) async throws -> FfiProposal {
+        if let error = proposeTransferAccountUUIDPaymentOutputsThrowableError {
+            throw error
+        }
+        proposeTransferAccountUUIDPaymentOutputsCallsCount += 1
+        proposeTransferAccountUUIDPaymentOutputsReceivedArguments = (accountUUID: accountUUID, paymentOutputs: paymentOutputs)
+        if let closure = proposeTransferAccountUUIDPaymentOutputsClosure {
+            return try await closure(accountUUID, paymentOutputs)
+        } else {
+            return proposeTransferAccountUUIDPaymentOutputsReturnValue
         }
     }
 

@@ -94,6 +94,15 @@ extension CombineSDKSynchronizer: CombineSynchronizer {
         }
     }
 
+    public func proposeTransfer(
+        accountUUID: AccountUUID,
+        proposalOutputs: [ProposalOutput]
+    ) -> SinglePublisher<Proposal, Error> {
+        AsyncToCombineGateway.executeThrowingAction() {
+            try await self.synchronizer.proposeTransfer(accountUUID: accountUUID, proposalOutputs: proposalOutputs)
+        }
+    }
+
     public func proposefulfillingPaymentURI(
         _ uri: String,
         accountUUID: AccountUUID

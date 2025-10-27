@@ -312,6 +312,65 @@ struct ZcashRustBackend: ZcashRustBackendWelding {
     }
 
     @DBActor
+    func proposeTransfer(
+        accountUUID: AccountUUID,
+        paymentOutputs: [PaymentOutput]
+    ) async throws -> FfiProposal {
+        let cAddresses = paymentOutputs.map { [CChar]($0.address.utf8CString) }
+        let cMemos = paymentOutputs.map { $0.memo?.bytes }
+        
+        return try withExtendedLifetime((cAddresses, cMemos)) {
+            var outputs: [FfiPaymentOutput] = []
+            
+            for i in 0..<paymentOutputs.count {
+                let output = cAddresses[i].withUnsafeBufferPointer { addrPtr in
+                    if let memo = cMemos[i] {
+                        return memo.withUnsafeBufferPointer { memoPtr in
+                            FfiPaymentOutput(
+                                to: addrPtr.baseAddress,
+                                value: paymentOutputs[i].value,
+                                memo: memoPtr.baseAddress
+                            )
+                        }
+                    } else {
+                        return FfiPaymentOutput(
+                            to: addrPtr.baseAddress,
+                            value: paymentOutputs[i].value,
+                            memo: nil
+                        )
+                    }
+                }
+                outputs.append(output)
+            }
+            
+            let proposal = outputs.withUnsafeBufferPointer { outputsPtr in
+                zcashlc_propose_transfer_multi(
+                    dbData.0,
+                    dbData.1,
+                    accountUUID.id,
+                    outputsPtr.baseAddress,
+                    UInt(outputs.count),
+                    networkType.networkId,
+                    confirmationsPolicy.toBackend()
+                )
+            }
+            
+            guard let proposal else {
+                throw ZcashError.rustCreateToAddress(
+                    lastErrorMessage(fallback: "`proposeTransfer` failed with unknown error")
+                )
+            }
+            
+            defer { zcashlc_free_boxed_slice(proposal) }
+            
+            return try FfiProposal(serializedBytes: Data(
+                bytes: proposal.pointee.ptr,
+                count: Int(proposal.pointee.len)
+            ))
+        }
+    }
+    
+    @DBActor
     func proposeTransferFromURI(
         _ uri: String,
         accountUUID: AccountUUID

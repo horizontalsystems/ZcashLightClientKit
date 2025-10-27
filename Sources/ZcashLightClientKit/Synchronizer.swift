@@ -184,6 +184,19 @@ public protocol Synchronizer: AnyObject {
         memo: Memo?
     ) async throws -> Proposal
 
+    /// Creates a proposal for transferring funds to the given recipients.
+    ///
+    /// - Parameter accountUUID: the account from which to transfer funds.
+    /// - Parameter proposalOutputs: array of payment outputs, each containing recipient address,
+    ///   amount in Zatoshi, and optional memo. Pass `nil` memo when sending to transparent receivers
+    ///
+    /// If `prepare()` hasn't already been called since creation of the synchronizer instance or since the last wipe then this method throws
+    /// `SynchronizerErrors.notPrepared`.
+    func proposeTransfer(
+        accountUUID: AccountUUID,
+        proposalOutputs: [ProposalOutput]
+    ) async throws -> Proposal
+
     /// Creates a proposal for shielding any transparent funds received by the given account.
     ///
     /// - Parameter accountUUID: the account for which to shield funds.

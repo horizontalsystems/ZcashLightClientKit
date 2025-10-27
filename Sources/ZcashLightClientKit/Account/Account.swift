@@ -46,3 +46,9 @@ public struct AccountUUID: Equatable, Codable, Hashable, Identifiable {
         self.id = id
     }
 }
+
+public struct PaymentOutput: Equatable, Hashable {
+    public let address: String
+    public let value: Int64
+    public let memo: MemoBytes?
+}

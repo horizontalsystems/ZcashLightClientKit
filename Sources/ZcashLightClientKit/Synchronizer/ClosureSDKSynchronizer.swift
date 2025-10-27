@@ -124,6 +124,16 @@ extension ClosureSDKSynchronizer: ClosureSynchronizer {
             try await self.synchronizer.proposeTransfer(accountUUID: accountUUID, recipient: recipient, amount: amount, memo: memo)
         }
     }
+    
+    public func proposeTransfer(
+        accountUUID: AccountUUID,
+        proposalOutputs: [ProposalOutput],
+        completion: @escaping (Result<Proposal, Error>) -> Void
+    ) {
+        AsyncToClosureGateway.executeThrowingAction(completion) {
+            try await self.synchronizer.proposeTransfer(accountUUID: accountUUID, proposalOutputs: proposalOutputs)
+        }
+    }
 
     public func proposeShielding(
         accountUUID: AccountUUID,

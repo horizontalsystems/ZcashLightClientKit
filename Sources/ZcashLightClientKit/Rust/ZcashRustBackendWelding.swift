@@ -251,6 +251,19 @@ protocol ZcashRustBackendWelding {
         value: Int64,
         memo: MemoBytes?
     ) async throws -> FfiProposal
+    
+    /// Select transaction inputs, compute fees, and construct a proposal for a transaction
+    /// with multiple outputs that can then be authorized and made ready for submission to
+    /// the network with `createProposedTransaction`.
+    ///
+    /// - Parameter accountUUID: UUID of the account to spend from
+    /// - Parameter paymentOutputs: array of payment outputs, each containing recipient address,
+    ///   amount in Zatoshi, and optional memo. Pass `nil` memo when sending to transparent receivers
+    /// - Throws: `rustCreateToAddress` if the proposal creation fails
+    func proposeTransfer(
+        accountUUID: AccountUUID,
+        paymentOutputs: [PaymentOutput]
+    ) async throws -> FfiProposal
 
     /// Select transaction inputs, compute fees, and construct a proposal for a transaction
     /// that can then be authorized and made ready for submission to the network with
