@@ -1252,11 +1252,11 @@ public class SDKSynchronizer: Synchronizer {
 
 extension SDKSynchronizer {
     static public func estimateBirthdayHeight(for date: Date, isMainnet: Bool = true) -> BlockHeight {
-        CheckpointSourceFactory.fromBundle(for: isMainnet).estimateBirthdayHeight(for: date)
+        CheckpointSourceFactory.fromBundle(for: isMainnet ? .mainnet : .testnet).estimateBirthdayHeight(for: date)
     }
 
-    static public func birthdayTime(for height: BlockHeight) -> UInt32 {
-        CheckpointSourceFactory.fromBundle(for: isMainnet).birthday(for: height).time
+    static public func birthdayTime(for height: BlockHeight, isMainnet: Bool = true) -> UInt32 {
+        CheckpointSourceFactory.fromBundle(for: isMainnet ? .mainnet : .testnet).birthday(for: height).time
     }
 }
 
