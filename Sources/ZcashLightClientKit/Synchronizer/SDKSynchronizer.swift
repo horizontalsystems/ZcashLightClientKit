@@ -1251,6 +1251,16 @@ public class SDKSynchronizer: Synchronizer {
 }
 
 extension SDKSynchronizer {
+    static public func estimateBirthdayHeight(for date: Date, isMainnet: Bool = true) -> BlockHeight {
+        CheckpointSourceFactory.fromBundle(for: isMainnet).estimateBirthdayHeight(for: date)
+    }
+
+    static public func birthdayTime(for height: BlockHeight) -> UInt32 {
+        CheckpointSourceFactory.fromBundle(for: isMainnet).birthday(for: height).time
+    }
+}
+
+extension SDKSynchronizer {
     public var transactions: [ZcashTransaction.Overview] {
         get async {
             (try? await self.allTransactions()) ?? []
