@@ -8,6 +8,7 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Added
 - `SDKSynchronizer.rescanFrom(height:)`: Rescans the chain from the given BlockHeight.
+- `SynchronizerState.fullyScannedHeight`: Contiguous-from-birthday scan high-water mark published on `stateStream`/`latestState`. Callers that need an authoritative view of the wallet's note and nullifier state at a specific height (for example, balance anchored at a poll snapshot) should gate on this rather than `latestBlockHeight` (chain tip) or `maxScannedHeight` (head-first scan progress, which can race ahead under Spend-before-Sync).
 
 # 2.4.9 - 2026-04-04
 
