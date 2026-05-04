@@ -433,13 +433,56 @@ class SynchronizerOfflineTests: ZcashTestCase {
             XCTFail("Syncing is expected to be 100% (1.0) but received \(data).")
         }
     }
-    
+
+    func testSynchronizerStateZeroHasZeroFullyScannedHeight() {
+        XCTAssertEqual(SynchronizerState.zero.fullyScannedHeight, .zero)
+    }
+
+    func testSynchronizerStateInitPreservesFullyScannedHeight() {
+        let state = SynchronizerState(
+            syncSessionID: .nullID,
+            accountsBalances: [:],
+            internalSyncStatus: .syncing(0, false),
+            latestBlockHeight: 222_222,
+            fullyScannedHeight: 100_000
+        )
+
+        XCTAssertEqual(state.fullyScannedHeight, 100_000)
+    }
+
+    // Regression guard: `fullyScannedHeight` is a *separate* dimension of `SynchronizerState`
+    // from `latestBlockHeight`. Callers (e.g. shielded-vote snapshot gating) rely on receiving
+    // a state-stream update whenever `fullyScannedHeight` advances, even if no other field
+    // changes. If `Equatable` ever stops distinguishing this field — e.g. because someone
+    // reorders the stored properties so the synthesised `==` excludes it — upstream
+    // deduplication (`removeDuplicates`, `Publisher.removeDuplicates`, `CurrentValueSubject`
+    // dedup) would silently swallow those updates.
+    func testSynchronizerStateEquatableDistinguishesFullyScannedHeight() {
+        let lhs = SynchronizerState(
+            syncSessionID: .nullID,
+            accountsBalances: [:],
+            internalSyncStatus: .syncing(0.5, false),
+            latestBlockHeight: 222_222,
+            fullyScannedHeight: 100_000
+        )
+        let rhs = SynchronizerState(
+            syncSessionID: .nullID,
+            accountsBalances: [:],
+            internalSyncStatus: .syncing(0.5, false),
+            latestBlockHeight: 222_222,
+            fullyScannedHeight: 120_000
+        )
+
+        XCTAssertNotEqual(lhs, rhs)
+    }
+
     func synchronizerState(for internalSyncStatus: InternalSyncStatus) -> SynchronizerState {
         SynchronizerState(
             syncSessionID: .nullID,
             accountsBalances: [:],
             internalSyncStatus: internalSyncStatus,
-            latestBlockHeight: .zero
+            latestBlockHeight: .zero,
+            fullyScannedHeight: .zero
         )
     }
 }
