@@ -33,15 +33,19 @@ pub unsafe extern "C" fn zcashlc_voting_validate_pir_proof(
         let root_bytes: [u8; 32] = unsafe { std::slice::from_raw_parts(root, 32) }
             .try_into()
             .map_err(|_| anyhow!("root must be exactly 32 bytes"))?;
-        let nf_bounds_bytes = unsafe { std::slice::from_raw_parts(nf_bounds, 96) };
-        let path_bytes = unsafe { std::slice::from_raw_parts(path, 928) };
+        let nf_bounds_bytes: [u8; 96] = unsafe { std::slice::from_raw_parts(nf_bounds, 96) }
+            .try_into()
+            .map_err(|_| anyhow!("nf_bounds must be exactly 96 bytes"))?;
+        let path_bytes: [u8; 928] = unsafe { std::slice::from_raw_parts(path, 928) }
+            .try_into()
+            .map_err(|_| anyhow!("path must be exactly 928 bytes"))?;
         let nullifier_bytes: [u8; 32] = unsafe { std::slice::from_raw_parts(nullifier, 32) }
             .try_into()
             .map_err(|_| anyhow!("nullifier must be exactly 32 bytes"))?;
         let expected_root_bytes: [u8; 32] =
             unsafe { std::slice::from_raw_parts(expected_root, 32) }
-            .try_into()
-            .map_err(|_| anyhow!("expected_root must be exactly 32 bytes"))?;
+                .try_into()
+                .map_err(|_| anyhow!("expected_root must be exactly 32 bytes"))?;
 
         let proof = zcash_voting::ImtProofData {
             root: parse_base(&root_bytes, "root")?,
@@ -51,7 +55,7 @@ pub unsafe extern "C" fn zcashlc_voting_validate_pir_proof(
                 parse_base(&nf_bounds_bytes[64..96], "nf_bounds[2]")?,
             ],
             leaf_pos,
-            path: parse_path(path_bytes)?,
+            path: parse_path(&path_bytes)?,
         };
 
         let nullifier = parse_base(&nullifier_bytes, "nullifier")?;
