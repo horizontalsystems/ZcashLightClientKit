@@ -6,6 +6,17 @@ use zcash_voting::zkp1;
 
 use crate::unwrap_exc_or;
 
+/// Depth of the IMT non-membership tree: number of authentication path
+/// siblings in a PIR-fetched proof. Matches `zcash_voting::ImtProofData::path`
+/// and `voting_circuits::delegation::imt::IMT_DEPTH` (29). Kept local because
+/// `voting-circuits` is not a direct dependency of this crate and
+/// `zcash_voting` does not currently re-export the constant.
+const NUM_PATH_ELEMENTS: usize = 29;
+
+/// Wire size of `ImtProofData::path` in bytes: one canonical 32-byte
+/// pallas::Base element per IMT depth level.
+const PATH_BYTES: usize = NUM_PATH_ELEMENTS * 32;
+
 /// Validate a PIR-fetched IMT non-membership proof bytewise.
 ///
 /// Inputs are the wire format of `zcash_voting::ImtProofData`: 32-byte LE
@@ -36,9 +47,9 @@ pub unsafe extern "C" fn zcashlc_voting_validate_pir_proof(
         let nf_bounds_bytes: [u8; 96] = unsafe { std::slice::from_raw_parts(nf_bounds, 96) }
             .try_into()
             .map_err(|_| anyhow!("nf_bounds must be exactly 96 bytes"))?;
-        let path_bytes: [u8; 928] = unsafe { std::slice::from_raw_parts(path, 928) }
+        let path_bytes: [u8; PATH_BYTES] = unsafe { std::slice::from_raw_parts(path, PATH_BYTES) }
             .try_into()
-            .map_err(|_| anyhow!("path must be exactly 928 bytes"))?;
+            .map_err(|_| anyhow!("path must be exactly {PATH_BYTES} bytes"))?;
         let nullifier_bytes: [u8; 32] = unsafe { std::slice::from_raw_parts(nullifier, 32) }
             .try_into()
             .map_err(|_| anyhow!("nullifier must be exactly 32 bytes"))?;
@@ -77,8 +88,8 @@ fn parse_base(bytes: &[u8], label: &str) -> anyhow::Result<pallas::Base> {
         .ok_or_else(|| anyhow!("{label} is not a canonical pallas::Base encoding"))
 }
 
-fn parse_path(bytes: &[u8]) -> anyhow::Result<[pallas::Base; 29]> {
-    let mut path = [pallas::Base::from(0); 29];
+fn parse_path(bytes: &[u8]) -> anyhow::Result<[pallas::Base; NUM_PATH_ELEMENTS]> {
+    let mut path = [pallas::Base::from(0); NUM_PATH_ELEMENTS];
     for (i, chunk) in bytes.chunks_exact(32).enumerate() {
         path[i] = parse_base(chunk, "path element")?;
     }
@@ -113,7 +124,7 @@ mod tests {
         proof_root: &[u8; 32],
         nf_bounds: &[u8; 96],
         leaf_pos: u32,
-        path: &[u8; 928],
+        path: &[u8; PATH_BYTES],
         nullifier: &[u8; 32],
         expected_root: &[u8; 32],
     ) -> i32 {
@@ -133,7 +144,7 @@ mod tests {
     fn validate_pir_proof_accepts_valid() {
         let root = decode_hex::<32>(ROOT);
         let nf_bounds = decode_hex::<96>(NF_BOUNDS);
-        let path = decode_hex::<928>(PATH);
+        let path = decode_hex::<PATH_BYTES>(PATH);
         let nullifier = decode_hex::<32>(NULLIFIER);
         let expected_root = decode_hex::<32>(EXPECTED_ROOT);
 
@@ -154,7 +165,7 @@ mod tests {
     fn validate_pir_proof_rejects_root_mismatch() {
         let root = decode_hex::<32>(ROOT);
         let nf_bounds = decode_hex::<96>(NF_BOUNDS);
-        let path = decode_hex::<928>(PATH);
+        let path = decode_hex::<PATH_BYTES>(PATH);
         let nullifier = decode_hex::<32>(NULLIFIER);
         let mut expected_root = decode_hex::<32>(EXPECTED_ROOT);
         expected_root[0] ^= 1;
@@ -176,7 +187,7 @@ mod tests {
     fn validate_pir_proof_rejects_corrupted_path() {
         let root = decode_hex::<32>(ROOT);
         let nf_bounds = decode_hex::<96>(NF_BOUNDS);
-        let mut path = decode_hex::<928>(PATH);
+        let mut path = decode_hex::<PATH_BYTES>(PATH);
         let nullifier = decode_hex::<32>(NULLIFIER);
         let expected_root = decode_hex::<32>(EXPECTED_ROOT);
         path[0] ^= 1;
@@ -197,7 +208,7 @@ mod tests {
     #[test]
     fn validate_pir_proof_rejects_non_canonical_field_encoding() {
         let nf_bounds = decode_hex::<96>(NF_BOUNDS);
-        let path = decode_hex::<928>(PATH);
+        let path = decode_hex::<PATH_BYTES>(PATH);
         let non_canonical_root = [0xff; 32];
         let nullifier = decode_hex::<32>(NULLIFIER);
         let expected_root = decode_hex::<32>(EXPECTED_ROOT);
