@@ -13,7 +13,10 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returned pointer via `zcashlc_string_free`. Returns `NULL` on error or
   panic. Pure-function FFI: no wallet DB, voting DB, network, randomness,
   or secret material involved.
-- Added `zcash_voting 0.4` (`default-features = false`) as a Rust dependency.
+- `zcashlc_voting_validate_pir_proof`: Validate a PIR-fetched IMT
+  non-membership proof against an expected root.
+- Added `zcash_voting 0.5.2` (`default-features = false`, `client-pir`) as a
+  Rust dependency.
 
 ### Changed
 - Pinned `orchard` to `=0.13.1` and enabled its `unstable-voting-circuits`
