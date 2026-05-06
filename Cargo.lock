@@ -6825,7 +6825,7 @@ dependencies = [
  "bs58",
  "corez",
  "f4jumble",
- "zcash_encoding",
+ "zcash_encoding 0.4.0 (git+https://github.com/zcash/librustzcash.git?rev=1600f94154bbda05dab694191b50393eec33c577)",
  "zcash_protocol",
 ]
 
@@ -6886,7 +6886,7 @@ dependencies = [
  "webpki-roots",
  "which",
  "zcash_address",
- "zcash_encoding",
+ "zcash_encoding 0.4.0 (git+https://github.com/zcash/librustzcash.git?rev=1600f94154bbda05dab694191b50393eec33c577)",
  "zcash_keys",
  "zcash_note_encryption",
  "zcash_primitives",
@@ -6899,8 +6899,9 @@ dependencies = [
 
 [[package]]
 name = "zcash_client_sqlite"
-version = "0.20.0"
-source = "git+https://github.com/zcash/librustzcash.git?rev=1600f94154bbda05dab694191b50393eec33c577#1600f94154bbda05dab694191b50393eec33c577"
+version = "0.20.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cfbaeaa5b2320720be03e0cc360b471b61f29437c09c9d1412f2030e5dec714"
 dependencies = [
  "bip32",
  "bitflags 2.11.1",
@@ -6934,13 +6935,24 @@ dependencies = [
  "uuid",
  "zcash_address",
  "zcash_client_backend",
- "zcash_encoding",
+ "zcash_encoding 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "zcash_keys",
  "zcash_primitives",
  "zcash_protocol",
  "zcash_script",
  "zcash_transparent",
  "zip32",
+]
+
+[[package]]
+name = "zcash_encoding"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1440921903cdb86133fb9e2fe800be488015db2939a30bedb413078a1acb0306"
+dependencies = [
+ "corez",
+ "hex",
+ "nonempty",
 ]
 
 [[package]]
@@ -6976,7 +6988,7 @@ dependencies = [
  "subtle",
  "tracing",
  "zcash_address",
- "zcash_encoding",
+ "zcash_encoding 0.4.0 (git+https://github.com/zcash/librustzcash.git?rev=1600f94154bbda05dab694191b50393eec33c577)",
  "zcash_protocol",
  "zcash_transparent",
  "zip32",
@@ -7018,7 +7030,7 @@ dependencies = [
  "sapling-crypto",
  "secp256k1",
  "sha2 0.10.9",
- "zcash_encoding",
+ "zcash_encoding 0.4.0 (git+https://github.com/zcash/librustzcash.git?rev=1600f94154bbda05dab694191b50393eec33c577)",
  "zcash_note_encryption",
  "zcash_protocol",
  "zcash_script",
@@ -7055,7 +7067,7 @@ dependencies = [
  "document-features",
  "hex",
  "memuse",
- "zcash_encoding",
+ "zcash_encoding 0.4.0 (git+https://github.com/zcash/librustzcash.git?rev=1600f94154bbda05dab694191b50393eec33c577)",
 ]
 
 [[package]]
@@ -7101,7 +7113,7 @@ dependencies = [
  "sha2 0.10.9",
  "subtle",
  "zcash_address",
- "zcash_encoding",
+ "zcash_encoding 0.4.0 (git+https://github.com/zcash/librustzcash.git?rev=1600f94154bbda05dab694191b50393eec33c577)",
  "zcash_protocol",
  "zcash_script",
  "zcash_spec",
@@ -7263,3 +7275,8 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[patch.unused]]
+name = "zcash_client_sqlite"
+version = "0.20.0"
+source = "git+https://github.com/zcash/librustzcash.git?rev=1600f94154bbda05dab694191b50393eec33c577#1600f94154bbda05dab694191b50393eec33c577"
