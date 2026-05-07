@@ -24,7 +24,7 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `zcashlc_voting_sync_vote_tree`: Sync the vote commitment tree for a round
   from a chain node URL, returning the latest synced block height (>= 0) on
   success, or -1 on error.
-- `zcashlc_voting_generate_van_witness`: Generate a vote authroity note Merkle witness for
+- `zcashlc_voting_generate_van_witness`: Generate a vote authority note Merkle witness for
   the second voting ZKP and return it as a JSON-encoded `VanWitness`
   (`auth_path`, `position`, `anchor_height`) in a `*mut FfiBoxedSlice`.
 - `zcashlc_voting_reset_tree_client`: Drop the in-memory tree client for a
@@ -32,8 +32,21 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `VotingDatabaseHandle` now also carries a
   `zcash_voting::tree_sync::VoteTreeSync`, constructed in
   `zcashlc_voting_db_open` and consumed by the tree-sync FFI above.
-- Added `zcash_voting 0.5.2` (`default-features = false`, `client-pir`) as a
-  Rust dependency.
+- `zcashlc_voting_get_wallet_notes`: Load unspent Orchard notes for a wallet
+  account at a snapshot height and return them as JSON-encoded
+  `Vec<NoteInfo>` in a `*mut FfiBoxedSlice`. `account_uuid` must be a non-null
+  pointer to exactly 16 bytes (binary account UUID). Returns `NULL` on error
+  or panic. Output is suitable as the `notes_json` input to
+  `zcashlc_voting_precompute_delegation_pir`.
+- `zcashlc_voting_extract_orchard_fvk_from_ufvk`: Decode a UFVK string and
+  return the raw 96-byte Orchard full viewing key in a
+  `*mut FfiBoxedSlice`. Returns `NULL` on missing Orchard component,
+  malformed UFVK, or invalid `network_id`.
+- Added `zcash_voting 0.5.3` (`default-features = false`, `client-pir`,
+  `client-tree-sync`) as a Rust dependency.
+- Added `zcash_keys 0.13` (`orchard` feature) as a Rust dependency, used by
+  the new wallet-notes and key-utility FFI for voting to decode UFVKs and derive
+  Orchard FVKs.
 
 ### Changed
 - Pinned `orchard` to `=0.13.1` and enabled its `unstable-voting-circuits`

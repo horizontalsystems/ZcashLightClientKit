@@ -31,6 +31,22 @@ impl From<JsonNoteInfo> for voting::NoteInfo {
     }
 }
 
+impl From<voting::NoteInfo> for JsonNoteInfo {
+    fn from(n: voting::NoteInfo) -> Self {
+        Self {
+            commitment: n.commitment,
+            nullifier: n.nullifier,
+            value: n.value,
+            position: n.position,
+            diversifier: n.diversifier,
+            rho: n.rho,
+            rseed: n.rseed,
+            scope: n.scope,
+            ufvk_str: n.ufvk_str,
+        }
+    }
+}
+
 /// JSON-serializable `DelegationPirPrecomputeResult`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsonDelegationPirPrecomputeResult {
