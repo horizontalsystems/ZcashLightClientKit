@@ -1,7 +1,8 @@
 #!/bin/bash
 # Initialize local FFI development environment
-# Usage: ./Scripts/init-local-ffi.sh [--cached]
-#   --cached   Download pre-built release instead of building from source
+# Usage: ./Scripts/init-local-ffi.sh [--cached|--macos-only]
+#   --cached      Download pre-built release instead of building from source
+#   --macos-only  Build only the macOS slice from your rust/ (fast; swift build / swift test on Mac)
 #
 # This creates LocalPackages/ with a locally-built xcframework.
 # Package.swift automatically detects LocalPackages/ and switches
@@ -18,13 +19,22 @@ if [[ -f "$HOME/.cargo/env" ]]; then
 fi
 
 USE_CACHED=false
-if [[ "$1" == "--cached" ]]; then
+MACOS_ONLY=false
+if [[ "${1:-}" == "--cached" ]]; then
     USE_CACHED=true
+elif [[ "${1:-}" == "--macos-only" ]]; then
+    MACOS_ONLY=true
 fi
 
 XCFRAMEWORK_DIR="LocalPackages/libzcashlc.xcframework"
 
-if [[ "$USE_CACHED" == "true" ]]; then
+if [[ "$MACOS_ONLY" == "true" ]]; then
+    echo "Initializing local FFI for macOS only (single-arch from your rust/)..."
+    mkdir -p LocalPackages
+    # rebuild-local-ffi.sh requires this directory to exist; it replaces contents entirely.
+    mkdir -p "$XCFRAMEWORK_DIR"
+    ./Scripts/rebuild-local-ffi.sh macos
+elif [[ "$USE_CACHED" == "true" ]]; then
     echo "Downloading pre-built xcframework..."
     REPO="zcash/zcash-swift-wallet-sdk"
 
@@ -85,5 +95,10 @@ echo "Next steps:"
 echo "  1. Open ZcashSDK.xcworkspace in Xcode (or run: swift build)"
 echo "  2. The workspace scheme rebuilds FFI automatically on each build."
 echo "     If opening Package.swift directly, run ./Scripts/rebuild-local-ffi.sh after Rust changes."
+if [[ "$MACOS_ONLY" == "true" ]]; then
+    echo ""
+    echo "Note: --macos-only produced a single-slice XCFramework. For iOS Simulator or device,"
+    echo "      run ./Scripts/rebuild-local-ffi.sh ios-sim or ios-device, or full ./Scripts/init-local-ffi.sh for every arch."
+fi
 echo ""
 echo "To switch back to the release binary: rm -rf LocalPackages/"
