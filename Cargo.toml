@@ -87,6 +87,7 @@ zcash_voting = { version = "0.5.2", default-features = false, features = [
     "client-pir",
     "client-tree-sync",
 ] }
+zcash_keys = { version = "0.13", features = ["orchard"] }
 
 [build-dependencies]
 bindgen = "0.72"
