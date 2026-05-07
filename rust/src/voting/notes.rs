@@ -115,7 +115,8 @@ mod tests {
     use crate::voting::db::{zcashlc_voting_db_free, zcashlc_voting_db_open};
 
     /// Arbitrary account UUID for FFI tests that only exercise path/network/db errors.
-    const TEST_ACCOUNT_UUID: [u8; super::ACCOUNT_UUID_BYTE_LEN] = [0x7Eu8; super::ACCOUNT_UUID_BYTE_LEN];
+    const TEST_ACCOUNT_UUID: [u8; super::ACCOUNT_UUID_BYTE_LEN] =
+        [0x7Eu8; super::ACCOUNT_UUID_BYTE_LEN];
 
     fn open_temp_voting_db(tag: &str) -> (*mut VotingDatabaseHandle, std::path::PathBuf) {
         let mut path = std::env::temp_dir();

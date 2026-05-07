@@ -46,7 +46,7 @@ mod tests {
     use zcash_protocol::consensus::Network;
 
     use super::*;
-    use crate::NETWORK_ID_MAINNET;
+    use crate::{NETWORK_ID_MAINNET, NETWORK_ID_TESTNET};
 
     fn free(ptr: *mut crate::ffi::BoxedSlice) {
         unsafe { crate::ffi::zcashlc_free_boxed_slice(ptr) };
@@ -54,11 +54,10 @@ mod tests {
 
     /// Build a deterministic, well-formed mainnet UFVK fixture and return its
     /// encoded string alongside its raw 96-byte Orchard FVK.
-    fn derive_test_ufvk() -> (String, [u8; 96]) {
+    fn derive_test_ufvk(network: Network) -> (String, [u8; 96]) {
         // 32 zero bytes is a valid seed length for `from_seed`. The exact value is
         // unimportant; we only need a deterministic, well-formed UFVK to round-trip
         // through the FFI.
-        let network = Network::MainNetwork;
         let seed = [0u8; 32];
         let account = zip32::AccountId::try_from(0).expect("account 0");
         let usk = UnifiedSpendingKey::from_seed(&network, &seed, account).expect("from_seed");
@@ -69,8 +68,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_orchard_fvk_returns_orchard_bytes_for_valid_ufvk() {
-        let (ufvk_str, expected) = derive_test_ufvk();
+    fn extract_orchard_fvk_returns_orchard_bytes_for_valid_mainnet_ufvk() {
+        let (ufvk_str, expected) = derive_test_ufvk(Network::MainNetwork);
 
         let result = unsafe {
             zcashlc_voting_extract_orchard_fvk_from_ufvk(
@@ -89,6 +88,40 @@ mod tests {
     }
 
     #[test]
+    fn extract_orchard_fvk_returns_orchard_bytes_for_valid_testnet_ufvk() {
+        let (ufvk_str, expected) = derive_test_ufvk(Network::TestNetwork);
+
+        let result = unsafe {
+            zcashlc_voting_extract_orchard_fvk_from_ufvk(
+                ufvk_str.as_ptr(),
+                ufvk_str.len(),
+                NETWORK_ID_TESTNET,
+            )
+        };
+        assert!(!result.is_null(), "expected non-null BoxedSlice");
+
+        let actual = unsafe { (*result).as_slice() }.to_vec();
+        free(result);
+
+        assert_eq!(actual.len(), 96, "Orchard FVK must be 96 bytes");
+        assert_eq!(actual, expected.to_vec(), "FVK bytes must match");
+    }
+
+    #[test]
+    fn extract_orchard_fvk_rejects_mainnet_ufvk_with_testnet_network_id() {
+        let (ufvk_str, _expected) = derive_test_ufvk(Network::MainNetwork);
+
+        let result = unsafe {
+            zcashlc_voting_extract_orchard_fvk_from_ufvk(
+                ufvk_str.as_ptr(),
+                ufvk_str.len(),
+                NETWORK_ID_TESTNET,
+            )
+        };
+        assert!(result.is_null());
+    }
+
+    #[test]
     fn extract_orchard_fvk_rejects_null_pointer_with_nonzero_len() {
         let result = unsafe {
             zcashlc_voting_extract_orchard_fvk_from_ufvk(std::ptr::null(), 5, NETWORK_ID_MAINNET)
@@ -98,7 +131,7 @@ mod tests {
 
     #[test]
     fn extract_orchard_fvk_rejects_invalid_network_id() {
-        let (ufvk_str, _expected) = derive_test_ufvk();
+        let (ufvk_str, _expected) = derive_test_ufvk(Network::MainNetwork);
         let result = unsafe {
             zcashlc_voting_extract_orchard_fvk_from_ufvk(ufvk_str.as_ptr(), ufvk_str.len(), 99)
         };
