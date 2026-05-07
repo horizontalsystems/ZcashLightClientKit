@@ -53,6 +53,14 @@ pub struct FfiRoundSummaries {
     pub(super) len: usize,
 }
 
+impl FfiRoundSummaries {
+    #[allow(dead_code)]
+    pub(super) fn ptr_from_vec(v: Vec<FfiRoundSummary>) -> *mut Self {
+        let (ptr, len) = crate::ptr_from_vec(v);
+        Box::into_raw(Box::new(Self { ptr, len }))
+    }
+}
+
 /// Vote record for a single proposal/bundle.
 #[repr(C)]
 pub struct FfiVoteRecord {
@@ -67,6 +75,14 @@ pub struct FfiVoteRecord {
 pub struct FfiVoteRecords {
     pub(super) ptr: *mut FfiVoteRecord,
     pub(super) len: usize,
+}
+
+impl FfiVoteRecords {
+    #[allow(dead_code)]
+    pub(super) fn ptr_from_vec(v: Vec<FfiVoteRecord>) -> *mut Self {
+        let (ptr, len) = crate::ptr_from_vec(v);
+        Box::into_raw(Box::new(Self { ptr, len }))
+    }
 }
 
 // =============================================================================
@@ -139,16 +155,11 @@ pub unsafe extern "C" fn zcashlc_voting_free_bundle_setup_result(ptr: *mut FfiBu
 pub unsafe extern "C" fn zcashlc_voting_free_round_summaries(ptr: *mut FfiRoundSummaries) {
     if !ptr.is_null() {
         let s: Box<FfiRoundSummaries> = unsafe { Box::from_raw(ptr) };
-        if !s.ptr.is_null() {
-            let summaries =
-                unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(s.ptr, s.len)) };
-            for summary in summaries.iter() {
-                if !summary.round_id.is_null() {
-                    drop(unsafe { CString::from_raw(summary.round_id) });
-                }
+        crate::free_ptr_from_vec_with(s.ptr, s.len, |summary| {
+            if !summary.round_id.is_null() {
+                drop(unsafe { CString::from_raw(summary.round_id) });
             }
-            drop(summaries);
-        }
+        });
         drop(s);
     }
 }
@@ -163,11 +174,7 @@ pub unsafe extern "C" fn zcashlc_voting_free_round_summaries(ptr: *mut FfiRoundS
 pub unsafe extern "C" fn zcashlc_voting_free_vote_records(ptr: *mut FfiVoteRecords) {
     if !ptr.is_null() {
         let s: Box<FfiVoteRecords> = unsafe { Box::from_raw(ptr) };
-        if !s.ptr.is_null() {
-            let records =
-                unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(s.ptr, s.len)) };
-            drop(records);
-        }
+        crate::free_ptr_from_vec(s.ptr, s.len);
         drop(s);
     }
 }
