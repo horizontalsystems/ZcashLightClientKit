@@ -4,14 +4,16 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use ffi_helpers::panic::catch_panic;
 use zcash_voting::storage::VotingDb;
+use zcash_voting::tree_sync::VoteTreeSync;
 
 use crate::{unwrap_exc_or, unwrap_exc_or_null};
 
 use super::helpers::str_from_ptr;
 
-/// Opaque handle wrapping the voting database.
+/// Opaque handle wrapping the voting database and its tree-sync state.
 pub struct VotingDatabaseHandle {
     pub(super) db: Arc<VotingDb>,
+    pub(super) tree_sync: VoteTreeSync,
 }
 
 /// Open a voting database at the given path.
@@ -35,6 +37,7 @@ pub unsafe extern "C" fn zcashlc_voting_db_open(
             .map_err(|e| anyhow!("Error opening voting database: {}", e))?;
         Ok(Box::into_raw(Box::new(VotingDatabaseHandle {
             db: Arc::new(db),
+            tree_sync: VoteTreeSync::new(),
         })))
     });
     unwrap_exc_or_null(res)
