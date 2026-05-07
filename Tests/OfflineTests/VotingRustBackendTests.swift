@@ -110,6 +110,53 @@ final class VotingRustBackendTests: XCTestCase {
         backend.close()
     }
 
+    func test_close_waitsForInFlightDatabaseOperationBeforeFreeingHandle() throws {
+        let backend = VotingRustBackend()
+        let path = makeTempDbPath()
+        try backend.open(path: path)
+
+        let operationStarted = XCTestExpectation(description: "operation started")
+        let operationFinished = XCTestExpectation(description: "operation finished")
+        let releaseOperation = DispatchSemaphore(value: 0)
+        let closeFinished = DispatchSemaphore(value: 0)
+
+        DispatchQueue.global().async {
+            do {
+                try backend._withLockedHandleForTesting {
+                    operationStarted.fulfill()
+                    releaseOperation.wait()
+                }
+                operationFinished.fulfill()
+            } catch {
+                XCTFail("unexpected error: \(error)")
+            }
+        }
+
+        wait(for: [operationStarted], timeout: 1.0)
+
+        DispatchQueue.global().async {
+            backend.close()
+            closeFinished.signal()
+        }
+
+        XCTAssertEqual(
+            closeFinished.wait(timeout: .now() + .milliseconds(100)),
+            .timedOut,
+            "`close()` returned while a database operation still held the handle"
+        )
+
+        releaseOperation.signal()
+        wait(for: [operationFinished], timeout: 1.0)
+        XCTAssertEqual(closeFinished.wait(timeout: .now() + .seconds(1)), .success)
+
+        XCTAssertThrowsError(try backend.setWalletId("wallet-after-close")) { error in
+            guard case VotingRustBackendError.databaseNotOpen = error else {
+                XCTFail("expected .databaseNotOpen, got \(error)")
+                return
+            }
+        }
+    }
+
     // MARK: - requireHandle gating
 
     func test_setWalletId_beforeOpen_throwsDatabaseNotOpen() {

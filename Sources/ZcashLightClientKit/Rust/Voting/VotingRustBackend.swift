@@ -41,9 +41,9 @@ public enum VotingRustBackendError: LocalizedError, Equatable {
 /// methods. Stateless / static FFI (e.g. `computeShareNullifier`) is exposed
 /// as type methods so callers do not need to open a database.
 ///
-/// Thread safety: handle access is serialized by an `NSLock`. The lock guards
-/// the handle slot only — it is released before the FFI call runs, so callers
-/// must not race `close()` against in-flight operations.
+/// Thread safety: handle access is serialized by an `NSLock`. Database-bound
+/// FFI calls hold the lock for their full duration so `close()` cannot free the
+/// handle while Rust is using it.
 public final class VotingRustBackend: @unchecked Sendable {
     private let lock = NSLock()
     private var handle: OpaquePointer?
@@ -102,15 +102,16 @@ extension VotingRustBackend {
     ///
     /// Must be called after `open(path:)` and before any round operations.
     public func setWalletId(_ walletId: String) throws {
-        let dbh = try requireHandle()
         let walletIdBytes = [UInt8](walletId.utf8)
 
-        let result = walletIdBytes.withUnsafeBufferPointer { buf in
-            zcashlc_voting_set_wallet_id(dbh, buf.baseAddress, UInt(buf.count))
-        }
+        try withHandle { dbh in
+            let result = walletIdBytes.withUnsafeBufferPointer { buf in
+                zcashlc_voting_set_wallet_id(dbh, buf.baseAddress, UInt(buf.count))
+            }
 
-        guard result == 0 else {
-            throw VotingRustBackendError.rustError(lastErrorMessage(fallback: "`set_wallet_id` failed"))
+            guard result == 0 else {
+                throw VotingRustBackendError.rustError(lastErrorMessage(fallback: "`set_wallet_id` failed"))
+            }
         }
     }
 }
@@ -145,34 +146,36 @@ extension VotingRustBackend {
             expectedSnapshotHeight: BlockHeight(expectedSnapshotHeight)
         )
 
-        let dbh = try requireHandle()
         let roundIdBytes = [UInt8](roundId.utf8)
         let notesJson = try JSONEncoder().encode(notes)
         let notesBytes = [UInt8](notesJson)
         let urlBytes = [UInt8](pirServerUrl.utf8)
 
-        let ptr: UnsafeMutablePointer<FfiBoxedSlice>? = roundIdBytes.withUnsafeBufferPointer { ridBuf in
-            notesBytes.withUnsafeBufferPointer { notesBuf in
-                urlBytes.withUnsafeBufferPointer { urlBuf in
-                    zcashlc_voting_precompute_delegation_pir(
-                        dbh,
-                        ridBuf.baseAddress,
-                        UInt(ridBuf.count),
-                        bundleIndex,
-                        notesBuf.baseAddress,
-                        UInt(notesBuf.count),
-                        urlBuf.baseAddress,
-                        UInt(urlBuf.count),
-                        networkId
-                    )
+        let ptr: UnsafeMutablePointer<FfiBoxedSlice> = try withHandle { dbh in
+            let ptr: UnsafeMutablePointer<FfiBoxedSlice>? = roundIdBytes.withUnsafeBufferPointer { ridBuf in
+                notesBytes.withUnsafeBufferPointer { notesBuf in
+                    urlBytes.withUnsafeBufferPointer { urlBuf in
+                        zcashlc_voting_precompute_delegation_pir(
+                            dbh,
+                            ridBuf.baseAddress,
+                            UInt(ridBuf.count),
+                            bundleIndex,
+                            notesBuf.baseAddress,
+                            UInt(notesBuf.count),
+                            urlBuf.baseAddress,
+                            UInt(urlBuf.count),
+                            networkId
+                        )
+                    }
                 }
             }
-        }
 
-        guard let ptr else {
-            throw VotingRustBackendError.rustError(
-                lastErrorMessage(fallback: "`precompute_delegation_pir` failed")
-            )
+            guard let ptr else {
+                throw VotingRustBackendError.rustError(
+                    lastErrorMessage(fallback: "`precompute_delegation_pir` failed")
+                )
+            }
+            return ptr
         }
         defer { zcashlc_free_boxed_slice(ptr) }
         return try decodeJSON(from: ptr)
@@ -186,26 +189,27 @@ extension VotingRustBackend {
     ///
     /// Returns the latest synced block height.
     public func syncVoteTree(roundId: String, nodeUrl: String) throws -> UInt32 {
-        let dbh = try requireHandle()
         let roundIdBytes = [UInt8](roundId.utf8)
         let urlBytes = [UInt8](nodeUrl.utf8)
 
-        let result = roundIdBytes.withUnsafeBufferPointer { ridBuf in
-            urlBytes.withUnsafeBufferPointer { urlBuf in
-                zcashlc_voting_sync_vote_tree(
-                    dbh,
-                    ridBuf.baseAddress,
-                    UInt(ridBuf.count),
-                    urlBuf.baseAddress,
-                    UInt(urlBuf.count)
-                )
+        return try withHandle { dbh in
+            let result = roundIdBytes.withUnsafeBufferPointer { ridBuf in
+                urlBytes.withUnsafeBufferPointer { urlBuf in
+                    zcashlc_voting_sync_vote_tree(
+                        dbh,
+                        ridBuf.baseAddress,
+                        UInt(ridBuf.count),
+                        urlBuf.baseAddress,
+                        UInt(urlBuf.count)
+                    )
+                }
             }
-        }
 
-        guard result >= 0 else {
-            throw VotingRustBackendError.rustError(lastErrorMessage(fallback: "`sync_vote_tree` failed"))
+            guard result >= 0 else {
+                throw VotingRustBackendError.rustError(lastErrorMessage(fallback: "`sync_vote_tree` failed"))
+            }
+            return UInt32(result)
         }
-        return UInt32(result)
     }
 
     /// Generate a Vote Authority Note (VAN) Merkle witness for the given
@@ -215,21 +219,23 @@ extension VotingRustBackend {
         bundleIndex: UInt32,
         anchorHeight: UInt32
     ) throws -> VotingVanWitness {
-        let dbh = try requireHandle()
         let roundIdBytes = [UInt8](roundId.utf8)
 
-        let ptr: UnsafeMutablePointer<FfiBoxedSlice>? = roundIdBytes.withUnsafeBufferPointer { buf in
-            zcashlc_voting_generate_van_witness(
-                dbh,
-                buf.baseAddress,
-                UInt(buf.count),
-                bundleIndex,
-                anchorHeight
-            )
-        }
+        let ptr: UnsafeMutablePointer<FfiBoxedSlice> = try withHandle { dbh in
+            let ptr: UnsafeMutablePointer<FfiBoxedSlice>? = roundIdBytes.withUnsafeBufferPointer { buf in
+                zcashlc_voting_generate_van_witness(
+                    dbh,
+                    buf.baseAddress,
+                    UInt(buf.count),
+                    bundleIndex,
+                    anchorHeight
+                )
+            }
 
-        guard let ptr else {
-            throw VotingRustBackendError.rustError(lastErrorMessage(fallback: "`generate_van_witness` failed"))
+            guard let ptr else {
+                throw VotingRustBackendError.rustError(lastErrorMessage(fallback: "`generate_van_witness` failed"))
+            }
+            return ptr
         }
         defer { zcashlc_free_boxed_slice(ptr) }
         return try decodeJSON(from: ptr)
@@ -240,15 +246,16 @@ extension VotingRustBackend {
     ///
     /// Pass an empty `roundId` to reset all rounds.
     public func resetTreeClient(roundId: String = "") throws {
-        let dbh = try requireHandle()
         let roundIdBytes = [UInt8](roundId.utf8)
 
-        let result = roundIdBytes.withUnsafeBufferPointer { buf in
-            zcashlc_voting_reset_tree_client(dbh, buf.baseAddress, UInt(buf.count))
-        }
+        try withHandle { dbh in
+            let result = roundIdBytes.withUnsafeBufferPointer { buf in
+                zcashlc_voting_reset_tree_client(dbh, buf.baseAddress, UInt(buf.count))
+            }
 
-        guard result == 0 else {
-            throw VotingRustBackendError.rustError(lastErrorMessage(fallback: "`reset_tree_client` failed"))
+            guard result == 0 else {
+                throw VotingRustBackendError.rustError(lastErrorMessage(fallback: "`reset_tree_client` failed"))
+            }
         }
     }
 }
@@ -306,17 +313,16 @@ extension VotingRustBackend {
 // MARK: - Private helpers
 
 private extension VotingRustBackend {
-    /// Snapshot the current handle under the lock, throwing if the database
-    /// is not open. The pointer is read-only after `close()` resets it, so the
-    /// snapshot is valid for the duration of the FFI call as long as callers
-    /// do not race `close()` against other operations.
-    func requireHandle() throws -> OpaquePointer {
+    /// Runs a database-bound operation while holding the handle lock. Keeping
+    /// the lock through the FFI call prevents `close()` from freeing the handle
+    /// before Rust is done using it.
+    func withHandle<T>(_ operation: (OpaquePointer) throws -> T) throws -> T {
         lock.lock()
         defer { lock.unlock() }
         guard let dbh = handle else {
             throw VotingRustBackendError.databaseNotOpen
         }
-        return dbh
+        return try operation(dbh)
     }
 
     func lastErrorMessage(fallback: String) -> String {
@@ -345,3 +351,13 @@ private extension VotingRustBackend {
         return fallback
     }
 }
+
+#if DEBUG
+extension VotingRustBackend {
+    func _withLockedHandleForTesting(_ operation: () -> Void) throws {
+        try withHandle { _ in
+            operation()
+        }
+    }
+}
+#endif
