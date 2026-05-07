@@ -452,6 +452,19 @@ mod tests {
         path
     }
 
+    fn open_memory_voting_db() -> *mut VotingDatabaseHandle {
+        let path = b":memory:";
+        let db = unsafe { zcashlc_voting_db_open(path.as_ptr(), path.len()) };
+        assert!(!db.is_null(), "open in-memory voting db");
+
+        let wallet = TEST_WALLET_ID.as_bytes();
+        assert_eq!(0, unsafe {
+            zcashlc_voting_set_wallet_id(db, wallet.as_ptr(), wallet.len())
+        });
+
+        db
+    }
+
     fn merkle_hash(tag: u64) -> MerkleHashOrchard {
         let repr = pallas::Base::from(tag).to_repr();
         MerkleHashOrchard::from_bytes(&repr).expect("small field element is canonical")
@@ -621,18 +634,7 @@ mod tests {
 
     #[test]
     fn precompute_delegation_pir_rejects_invalid_network_id() {
-        let mut path = std::env::temp_dir();
-        path.push(format!(
-            "zcashlc_voting_precompute_network_test_{}.sqlite",
-            std::process::id()
-        ));
-        let path_bytes = path.to_string_lossy().as_bytes().to_vec();
-        let db = unsafe { zcashlc_voting_db_open(path_bytes.as_ptr(), path_bytes.len()) };
-        assert!(!db.is_null(), "open voting db");
-        let wallet = TEST_WALLET_ID.as_bytes();
-        assert_eq!(0, unsafe {
-            zcashlc_voting_set_wallet_id(db, wallet.as_ptr(), wallet.len())
-        });
+        let db = open_memory_voting_db();
         let result = unsafe {
             zcashlc_voting_precompute_delegation_pir(
                 db,
@@ -648,7 +650,6 @@ mod tests {
         };
         assert!(result.is_null());
         unsafe { zcashlc_voting_db_free(db) };
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
@@ -672,18 +673,7 @@ mod tests {
 
     #[test]
     fn generate_note_witnesses_rejects_invalid_network_id() {
-        let mut path = std::env::temp_dir();
-        path.push(format!(
-            "zcashlc_voting_generate_witnesses_network_test_{}.sqlite",
-            std::process::id()
-        ));
-        let path_bytes = path.to_string_lossy().as_bytes().to_vec();
-        let db = unsafe { zcashlc_voting_db_open(path_bytes.as_ptr(), path_bytes.len()) };
-        assert!(!db.is_null(), "open voting db");
-        let wallet = b"wallet-id";
-        assert_eq!(0, unsafe {
-            zcashlc_voting_set_wallet_id(db, wallet.as_ptr(), wallet.len())
-        });
+        let db = open_memory_voting_db();
         // Network id 99 is invalid; the call must reject it before touching
         // the wallet DB at the (non-existent) path.
         let wallet_db_path = b"/nonexistent/wallet.sqlite";
@@ -702,7 +692,6 @@ mod tests {
         };
         assert!(result.is_null());
         unsafe { zcashlc_voting_db_free(db) };
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
@@ -711,9 +700,7 @@ mod tests {
         const LATER_HEIGHT: u32 = 200;
         const BUNDLE_INDEX: u32 = 7;
 
-        let voting_path = temp_sqlite_path("generate_witnesses_success_voting");
         let wallet_path = temp_sqlite_path("generate_witnesses_success_wallet");
-        let voting_path_bytes = voting_path.to_string_lossy().as_bytes().to_vec();
         let wallet_path_bytes = wallet_path.to_string_lossy().as_bytes().to_vec();
 
         let mut frontier_tree: Frontier<
@@ -772,14 +759,7 @@ mod tests {
         let tree_state = tree_state_from_frontier(SNAPSHOT_HEIGHT, &frontier_tree);
         let tree_state_bytes = tree_state.encode_to_vec();
 
-        let db =
-            unsafe { zcashlc_voting_db_open(voting_path_bytes.as_ptr(), voting_path_bytes.len()) };
-        assert!(!db.is_null(), "open voting db");
-
-        let wallet = TEST_WALLET_ID.as_bytes();
-        assert_eq!(0, unsafe {
-            zcashlc_voting_set_wallet_id(db, wallet.as_ptr(), wallet.len())
-        });
+        let db = open_memory_voting_db();
 
         // The FFI validates that the cached TreeState is anchored exactly to
         // the round snapshot height and note commitment root.
@@ -881,7 +861,6 @@ mod tests {
         }
 
         unsafe { zcashlc_voting_db_free(db) };
-        let _ = std::fs::remove_file(&voting_path);
         let _ = std::fs::remove_file(&wallet_path);
     }
 }
