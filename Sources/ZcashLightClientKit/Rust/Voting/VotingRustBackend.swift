@@ -365,7 +365,7 @@ private extension VotingRustBackend {
 
 #if DEBUG
 extension VotingRustBackend {
-    func _withLockedHandleForTesting(_ operation: () -> Void) throws {
+    func withLockedHandleForTesting(_ operation: () -> Void) throws {
         try withHandle { _ in
             operation()
         }

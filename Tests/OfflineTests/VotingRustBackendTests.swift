@@ -122,7 +122,7 @@ final class VotingRustBackendTests: XCTestCase {
 
         DispatchQueue.global().async {
             do {
-                try backend._withLockedHandleForTesting {
+                try backend.withLockedHandleForTesting {
                     operationStarted.fulfill()
                     releaseOperation.wait()
                 }
