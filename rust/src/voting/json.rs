@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 use zcash_voting as voting;
 
@@ -54,6 +52,7 @@ impl From<voting::NoteInfo> for JsonNoteInfo {
 }
 
 /// JSON-serializable VotingPczt.
+#[allow(dead_code)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsonVotingPczt {
     pub pczt_bytes: Vec<u8>,
@@ -136,6 +135,7 @@ impl From<JsonWitnessData> for voting::WitnessData {
 }
 
 /// JSON-serializable DelegationProofResult.
+#[allow(dead_code)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsonDelegationProofResult {
     pub proof: Vec<u8>,
@@ -181,6 +181,7 @@ impl From<voting::DelegationPirPrecomputeResult> for JsonDelegationPirPrecompute
 ///
 /// Omits the spend-auth randomizer `alpha`; the submission already carries
 /// `spend_auth_sig`, so callers do not need the signing secret after signing.
+#[allow(dead_code)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsonDelegationSubmission {
     pub rk: Vec<u8>,
@@ -240,6 +241,7 @@ impl From<JsonWireEncryptedShare> for voting::WireEncryptedShare {
 }
 
 /// JSON-serializable VoteCommitmentBundle.
+#[allow(dead_code)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsonVoteCommitmentBundle {
     pub van_nullifier: Vec<u8>,
@@ -278,6 +280,7 @@ impl From<voting::VoteCommitmentBundle> for JsonVoteCommitmentBundle {
 }
 
 /// JSON-serializable SharePayload.
+#[allow(dead_code)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsonSharePayload {
     pub shares_hash: Vec<u8>,
@@ -318,6 +321,7 @@ impl From<voting::SharePayload> for JsonSharePayload {
 }
 
 /// JSON-serializable CastVoteSignature.
+#[allow(dead_code)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsonCastVoteSignature {
     pub vote_auth_sig: Vec<u8>,
