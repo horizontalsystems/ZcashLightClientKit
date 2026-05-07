@@ -29,6 +29,17 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`auth_path`, `position`, `anchor_height`) in a `*mut FfiBoxedSlice`.
 - `zcashlc_voting_reset_tree_client`: Drop the in-memory tree client for a
   round so the next `zcashlc_voting_sync_vote_tree` call creates a fresh one.
+- `zcashlc_voting_warm_proving_caches`, `zcashlc_voting_decompose_weight`,
+  `zcashlc_voting_generate_delegation_inputs`,
+  `zcashlc_voting_generate_delegation_inputs_with_fvk`,
+  `zcashlc_voting_extract_pczt_sighash`,
+  `zcashlc_voting_extract_spend_auth_sig`,
+  `zcashlc_voting_extract_nc_root`, and `zcashlc_voting_verify_witness`:
+  Utility FFI for voting proof setup, PCZT/signature extraction,
+  note-commitment root extraction, and witness verification.
+- `FfiRoundState`, `FfiVotingHotkey`, `FfiBundleSetupResult`,
+  `FfiRoundSummaries`, and `FfiVoteRecords`, plus their
+  `zcashlc_voting_free_*` helpers, for C-compatible voting return values.
 - `VotingDatabaseHandle` now also carries a
   `zcash_voting::tree_sync::VoteTreeSync`, constructed in
   `zcashlc_voting_db_open` and consumed by the tree-sync FFI above.
@@ -45,8 +56,8 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `zcash_voting 0.5.3` (`default-features = false`, `client-pir`,
   `client-tree-sync`) as a Rust dependency.
 - Added `zcash_keys 0.13` (`orchard` feature) as a Rust dependency, used by
-  the new wallet-notes and key-utility FFI for voting to decode UFVKs and derive
-  Orchard FVKs.
+  the new wallet-notes, key-utility, and utility FFI for voting to decode UFVKs
+  and derive Orchard FVKs.
 
 ### Changed
 - Pinned `orchard` to `=0.13.1` and enabled its `unstable-voting-circuits`

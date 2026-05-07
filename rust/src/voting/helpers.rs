@@ -1,20 +1,29 @@
+#![allow(dead_code)]
+
+use std::ffi::CString;
+
 use anyhow::anyhow;
 use orchard::note::ExtractedNoteCommitment;
 use serde::Serialize;
 use zcash_client_sqlite::util::SystemClock;
-use zcash_keys::keys::UnifiedFullViewingKey;
-use zcash_protocol::consensus;
-use zcash_protocol::consensus::Network;
+use zcash_keys::keys::{UnifiedFullViewingKey, UnifiedSpendingKey};
+use zcash_protocol::consensus::{self, Network};
 use zcash_voting as voting;
-use zip32::Scope;
+use zip32::{AccountId, Scope};
+
+use super::ffi_types::FfiVotingHotkey;
+
+// =============================================================================
+// Helper functions
+// =============================================================================
 
 /// Borrow a byte slice from a raw `(ptr, len)` pair.
 ///
 /// When `len == 0`, returns an empty slice without reading `ptr`, so `ptr` may be null.
 ///
-/// Centralizing the null + length check here lets every voting FFI byte input — strings,
-/// JSON payloads, anything else — share one boundary contract instead of open-coding it
-/// per call site. `str_from_ptr` now delegates to this helper.
+/// Centralizing the null + length check here lets every voting FFI byte input - strings,
+/// JSON payloads, anything else - share one boundary contract instead of open-coding it
+/// per call site. `str_from_ptr` delegates to this helper.
 ///
 /// # Safety
 ///
@@ -110,9 +119,99 @@ pub(super) fn open_wallet_db(
         .map_err(|e| anyhow!("failed to open wallet DB: {}", e))
 }
 
+pub(super) fn round_phase_to_u32(phase: voting::storage::RoundPhase) -> u32 {
+    use voting::storage::RoundPhase::*;
+
+    match phase {
+        Initialized => 0,
+        HotkeyGenerated => 1,
+        DelegationConstructed => 2,
+        DelegationProved => 3,
+        VoteReady => 4,
+    }
+}
+
+pub(super) fn usk_from_seed(
+    network_id: u32,
+    seed: &[u8],
+    account: AccountId,
+) -> anyhow::Result<UnifiedSpendingKey> {
+    let network = crate::parse_network(network_id)?;
+    let usk = UnifiedSpendingKey::from_seed(&network, seed, account)
+        .map_err(|e| anyhow!("failed to derive UnifiedSpendingKey: {}", e))?;
+
+    Ok(usk)
+}
+
+pub(super) struct HotkeySideInputs {
+    pub(super) g_d_new_x: Vec<u8>,
+    pub(super) pk_d_new_x: Vec<u8>,
+    pub(super) hotkey_raw_address: Vec<u8>,
+    pub(super) hotkey_public_key: Vec<u8>,
+    pub(super) hotkey_address: String,
+}
+
+pub(super) fn derive_hotkey_side_inputs(
+    hotkey_seed: &[u8],
+    network_id: u32,
+    hotkey_account: AccountId,
+) -> anyhow::Result<HotkeySideInputs> {
+    let hotkey_usk = usk_from_seed(network_id, hotkey_seed, hotkey_account)
+        .map_err(|e| anyhow!("failed to derive hotkey UnifiedSpendingKey: {}", e))?;
+
+    let hotkey_ufvk = hotkey_usk.to_unified_full_viewing_key();
+    let hotkey_orchard_fvk = hotkey_ufvk
+        .orchard()
+        .ok_or_else(|| anyhow!("hotkey UFVK is missing Orchard component"))?;
+
+    let app_hotkey = voting::hotkey::generate_hotkey(hotkey_seed)
+        .map_err(|e| anyhow!("generate_hotkey failed: {}", e))?;
+    let hotkey_addr = hotkey_orchard_fvk.address_at(0u32, Scope::External);
+    let hotkey_raw_address = hotkey_addr.to_raw_address_bytes().to_vec();
+
+    let hotkey_addr_43: [u8; 43] = hotkey_raw_address
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow!("address serialization must be 43 bytes"))?;
+    let (g_d_new_x, pk_d_new_x) =
+        voting::action::derive_hotkey_x_coords_from_raw_address(&hotkey_addr_43)
+            .map_err(|e| anyhow!("derive_hotkey_x_coords failed: {}", e))?;
+
+    Ok(HotkeySideInputs {
+        g_d_new_x: g_d_new_x.to_vec(),
+        pk_d_new_x: pk_d_new_x.to_vec(),
+        hotkey_raw_address,
+        hotkey_public_key: app_hotkey.public_key,
+        hotkey_address: app_hotkey.address,
+    })
+}
+
+// =============================================================================
+// Internal helpers
+// =============================================================================
+
+/// Convert a `voting::VotingHotkey` to the FFI representation.
+pub(super) fn voting_hotkey_to_ffi(
+    hotkey: voting::VotingHotkey,
+) -> anyhow::Result<FfiVotingHotkey> {
+    let (sk_ptr, sk_len) = crate::ptr_from_vec(hotkey.secret_key);
+    let (pk_ptr, pk_len) = crate::ptr_from_vec(hotkey.public_key);
+    let address = CString::new(hotkey.address)
+        .map_err(|e| anyhow!("invalid hotkey address string: {}", e))?
+        .into_raw();
+    Ok(FfiVotingHotkey {
+        secret_key: sk_ptr,
+        secret_key_len: sk_len,
+        public_key: pk_ptr,
+        public_key_len: pk_len,
+        address,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zcash_protocol::consensus::{MAIN_NETWORK, TEST_NETWORK};
 
     #[test]
     fn bytes_from_ptr_zero_len_accepts_null() {
@@ -136,5 +235,35 @@ mod tests {
     fn str_from_ptr_rejects_null_when_nonzero_len() {
         let err = unsafe { str_from_ptr(std::ptr::null(), 3) }.expect_err("null");
         assert!(err.to_string().contains("null"));
+    }
+
+    #[test]
+    fn usk_from_seed_uses_sdk_network_ids() {
+        let seed = [7u8; 32];
+        let account = AccountId::try_from(0).expect("account 0");
+
+        let mainnet_usk = usk_from_seed(1, &seed, account).expect("mainnet usk");
+        let expected_mainnet =
+            UnifiedSpendingKey::from_seed(&MAIN_NETWORK, &seed, account).expect("mainnet seed");
+        assert_eq!(
+            mainnet_usk
+                .to_unified_full_viewing_key()
+                .encode(&MAIN_NETWORK),
+            expected_mainnet
+                .to_unified_full_viewing_key()
+                .encode(&MAIN_NETWORK)
+        );
+
+        let testnet_usk = usk_from_seed(0, &seed, account).expect("testnet usk");
+        let expected_testnet =
+            UnifiedSpendingKey::from_seed(&TEST_NETWORK, &seed, account).expect("testnet seed");
+        assert_eq!(
+            testnet_usk
+                .to_unified_full_viewing_key()
+                .encode(&TEST_NETWORK),
+            expected_testnet
+                .to_unified_full_viewing_key()
+                .encode(&TEST_NETWORK)
+        );
     }
 }
