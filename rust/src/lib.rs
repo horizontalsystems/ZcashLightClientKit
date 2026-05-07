@@ -4137,7 +4137,7 @@ pub unsafe extern "C" fn zcashlc_tor_lwd_conn_check_single_use_taddr(
 // Utility functions
 //
 
-fn parse_network(value: u32) -> anyhow::Result<Network> {
+pub(crate) fn parse_network(value: u32) -> anyhow::Result<Network> {
     match value {
         0 => Ok(TestNetwork),
         1 => Ok(MainNetwork),

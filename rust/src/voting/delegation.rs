@@ -1,10 +1,83 @@
+use std::panic::AssertUnwindSafe;
+use std::sync::Arc;
+
 use anyhow::anyhow;
 use ff::PrimeField;
 use ffi_helpers::panic::catch_panic;
 use pasta_curves::pallas;
-use zcash_voting::zkp1;
+use zcash_voting::{self as voting, zkp1};
 
-use crate::unwrap_exc_or;
+use crate::{unwrap_exc_or, unwrap_exc_or_null};
+
+use super::db::VotingDatabaseHandle;
+use super::helpers::{bytes_from_ptr, json_to_boxed_slice, str_from_ptr};
+use super::json::{JsonDelegationPirPrecomputeResult, JsonNoteInfo};
+
+// Keep PIR client construction at the SDK boundary so zcash_voting can accept
+// an injected transport. Today we use direct Hyper/Rustls. In the future this will be the
+// single place to add a Tor-backed transport based on SDK configuration.
+fn connect_pir_client(pir_url: &str) -> anyhow::Result<voting::PirClientBlocking> {
+    voting::PirClientBlocking::with_transport(pir_url, Arc::new(voting::HyperTransport::new()))
+        .map_err(|e| anyhow!("connect to PIR server failed: {}", e))
+}
+
+/// Precompute and cache delegation PIR IMT proofs for the delegation ZKP.
+///
+/// Returns JSON-encoded `DelegationPirPrecomputeResult` as `*mut FfiBoxedSlice`,
+/// or null on error.
+///
+/// # Safety
+///
+/// - `db` must be a valid, non-null `VotingDatabaseHandle` pointer.
+/// - For every `(ptr, len)` byte argument (`round_id`, `notes_json`, `pir_server_url`):
+///   if `len > 0` then `ptr` must be non-null and valid for reads for `len` bytes; if
+///   `len == 0`, `ptr` is ignored. An empty `notes_json` is treated as the empty notes
+///   list (JSON is not parsed).
+/// - `network_id` must be `0` (testnet) or `1` (mainnet), matching other `zcashlc_*` FFI.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zcashlc_voting_precompute_delegation_pir(
+    db: *mut VotingDatabaseHandle,
+    round_id: *const u8,
+    round_id_len: usize,
+    bundle_index: u32,
+    notes_json: *const u8,
+    notes_json_len: usize,
+    pir_server_url: *const u8,
+    pir_server_url_len: usize,
+    network_id: u32,
+) -> *mut crate::ffi::BoxedSlice {
+    let db = AssertUnwindSafe(db);
+    let res = catch_panic(|| {
+        let handle =
+            unsafe { db.as_ref() }.ok_or_else(|| anyhow!("VotingDatabaseHandle is null"))?;
+        crate::parse_network(network_id)?;
+        let round_id_str = unsafe { str_from_ptr(round_id, round_id_len) }?;
+        let notes_bytes = unsafe { bytes_from_ptr(notes_json, notes_json_len) }?;
+        let json_notes: Vec<JsonNoteInfo> = if notes_bytes.is_empty() {
+            Vec::new()
+        } else {
+            serde_json::from_slice(notes_bytes)?
+        };
+        let core_notes: Vec<voting::NoteInfo> = json_notes.into_iter().map(Into::into).collect();
+        let pir_url = unsafe { str_from_ptr(pir_server_url, pir_server_url_len) }?;
+        let pir_client = connect_pir_client(&pir_url)?;
+
+        let result = handle
+            .db
+            .precompute_delegation_pir(
+                &round_id_str,
+                bundle_index,
+                &core_notes,
+                &pir_client,
+                network_id,
+            )
+            .map_err(|e| anyhow!("precompute_delegation_pir failed: {}", e))?;
+
+        let json_result: JsonDelegationPirPrecomputeResult = result.into();
+        json_to_boxed_slice(&json_result)
+    });
+    unwrap_exc_or_null(res)
+}
 
 /// Depth of the IMT non-membership tree: number of authentication path
 /// siblings in a PIR-fetched proof. Matches `zcash_voting::ImtProofData::path`
@@ -99,6 +172,10 @@ fn parse_path(bytes: &[u8]) -> anyhow::Result<[pallas::Base; NUM_PATH_ELEMENTS]>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::voting::db::{
+        zcashlc_voting_db_free, zcashlc_voting_db_open, zcashlc_voting_set_wallet_id,
+    };
 
     // Golden proof generated from zcash_voting's test-only TestImt helper:
     // https://github.com/valargroup/zcash_voting/blob/zcash_voting-v0.5.2/zcash_voting/src/zkp1.rs#L573-L708
@@ -224,5 +301,56 @@ mod tests {
             ),
             -1
         );
+    }
+
+    #[test]
+    fn precompute_delegation_pir_rejects_null_db() {
+        let result = unsafe {
+            zcashlc_voting_precompute_delegation_pir(
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                0,
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                0,
+                0,
+            )
+        };
+
+        assert!(result.is_null());
+    }
+
+    #[test]
+    fn precompute_delegation_pir_rejects_invalid_network_id() {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "zcashlc_voting_precompute_network_test_{}.sqlite",
+            std::process::id()
+        ));
+        let path_bytes = path.to_string_lossy().as_bytes().to_vec();
+        let db = unsafe { zcashlc_voting_db_open(path_bytes.as_ptr(), path_bytes.len()) };
+        assert!(!db.is_null(), "open voting db");
+        let wallet = b"wallet-id";
+        assert_eq!(0, unsafe {
+            zcashlc_voting_set_wallet_id(db, wallet.as_ptr(), wallet.len())
+        });
+        let result = unsafe {
+            zcashlc_voting_precompute_delegation_pir(
+                db,
+                b"round1".as_ptr(),
+                6,
+                0,
+                b"[]".as_ptr(),
+                2,
+                b"https://example.com/".as_ptr(),
+                20,
+                99,
+            )
+        };
+        assert!(result.is_null());
+        unsafe { zcashlc_voting_db_free(db) };
+        let _ = std::fs::remove_file(&path);
     }
 }
