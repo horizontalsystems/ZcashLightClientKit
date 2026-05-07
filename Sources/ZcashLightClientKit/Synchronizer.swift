@@ -554,6 +554,13 @@ public protocol Synchronizer: AnyObject {
     ///
     /// - Throws rustDeleteAccount as a common indicator of the operation failure
     func deleteAccount(_ accountUUID: AccountUUID) async throws -> Void
+
+    /// Provides access to transaction creation and submission operations
+    /// that are decoupled from the synchronizer's built-in submission flow.
+    ///
+    /// Use this to implement custom broadcast strategies such as submitting
+    /// to multiple lightwalletd servers in parallel.
+    var broadcaster: Broadcaster { get }
 }
 
 /// Error thrown by the default `Synchronizer.getTreeState(height:)` implementation
@@ -570,6 +577,41 @@ private struct GetTreeStateUnimplemented: LocalizedError {
     }
 }
 
+/// Error thrown by the default `Synchronizer.broadcaster` implementation.
+private struct BroadcasterUnimplemented: LocalizedError {
+    var errorDescription: String? {
+        """
+        Synchronizer.broadcaster has no default implementation. \
+        Override this property in your Synchronizer conformer to provide broadcast support.
+        """
+    }
+}
+
+/// Default broadcaster used by `Synchronizer` conformers that do not override
+/// `broadcaster`.
+private final class UnimplementedBroadcaster: Broadcaster {
+    func createProposedTransactions(
+        proposal: Proposal,
+        spendingKey: UnifiedSpendingKey
+    ) async throws -> [ZcashTransaction.Overview] {
+        throw BroadcasterUnimplemented()
+    }
+
+    func createTransactionFromPCZT(
+        pcztWithProofs: Pczt,
+        pcztWithSigs: Pczt
+    ) async throws -> [ZcashTransaction.Overview] {
+        throw BroadcasterUnimplemented()
+    }
+
+    func submit(
+        _ rawTransaction: Data,
+        to endpoint: LightWalletEndpoint
+    ) async throws {
+        throw BroadcasterUnimplemented()
+    }
+}
+
 public extension Synchronizer {
     /// Default implementation so adding `getTreeState(height:)` to the protocol is
     /// not a source-breaking change for downstream conformers. Conformers that have
@@ -578,6 +620,34 @@ public extension Synchronizer {
     /// this default and report the feature as unavailable.
     func getTreeState(height: UInt64) async throws -> Data {
         throw GetTreeStateUnimplemented()
+    }
+
+    /// Default implementation so adding `broadcaster` to the protocol is not a
+    /// source-breaking change for downstream conformers. Conformers with broadcast
+    /// support override this; mocks, stubs, and alternate transports can fall
+    /// through to this default and report the feature as unavailable.
+    var broadcaster: Broadcaster {
+        UnimplementedBroadcaster()
+    }
+}
+
+public extension ClosureSynchronizer {
+    /// Default implementation so adding `broadcaster` to the protocol is not a
+    /// source-breaking change for downstream conformers. Conformers with broadcast
+    /// support override this; mocks, stubs, and alternate transports can fall
+    /// through to this default and report the feature as unavailable.
+    var broadcaster: Broadcaster {
+        UnimplementedBroadcaster()
+    }
+}
+
+public extension CombineSynchronizer {
+    /// Default implementation so adding `broadcaster` to the protocol is not a
+    /// source-breaking change for downstream conformers. Conformers with broadcast
+    /// support override this; mocks, stubs, and alternate transports can fall
+    /// through to this default and report the feature as unavailable.
+    var broadcaster: Broadcaster {
+        UnimplementedBroadcaster()
     }
 }
 
