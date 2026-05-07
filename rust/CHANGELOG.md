@@ -40,6 +40,9 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `FfiRoundState`, `FfiVotingHotkey`, `FfiBundleSetupResult`,
   `FfiRoundSummaries`, and `FfiVoteRecords`, plus their
   `zcashlc_voting_free_*` helpers, for C-compatible voting return values.
+- `zcashlc_voting_generate_note_witnesses`: Generate Orchard Merkle inclusion
+  witnesses for the notes in a voting bundle, anchored at the round's snapshot
+  height.
 - `VotingDatabaseHandle` now also carries a
   `zcash_voting::tree_sync::VoteTreeSync`, constructed in
   `zcashlc_voting_db_open` and consumed by the tree-sync FFI above.
@@ -56,8 +59,11 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `zcash_voting 0.5.3` (`default-features = false`, `client-pir`,
   `client-tree-sync`) as a Rust dependency.
 - Added `zcash_keys 0.13` (`orchard` feature) as a Rust dependency, used by
-  the new wallet-notes, key-utility, and utility FFI for voting to decode UFVKs
-  and derive Orchard FVKs.
+  the new wallet-notes and key-utility FFI for voting to decode UFVKs and derive
+  Orchard FVKs.
+- Added `incrementalmerkletree 0.8` (`default-features = false`) as a direct
+  Rust dependency, used by `zcashlc_voting_generate_note_witnesses` for
+  `Position` and the `MerklePath` returned by the wallet DB.
 
 ### Changed
 - Pinned `orchard` to `=0.13.1` and enabled its `unstable-voting-circuits`

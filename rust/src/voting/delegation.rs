@@ -4,14 +4,194 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use ff::PrimeField;
 use ffi_helpers::panic::catch_panic;
+use incrementalmerkletree::Position;
 use pasta_curves::pallas;
+use prost::Message;
+use zcash_client_backend::proto::service::TreeState;
 use zcash_voting::{self as voting, zkp1};
 
 use crate::{unwrap_exc_or, unwrap_exc_or_null};
 
 use super::db::VotingDatabaseHandle;
 use super::helpers::{bytes_from_ptr, json_to_boxed_slice, str_from_ptr};
-use super::json::{JsonDelegationPirPrecomputeResult, JsonNoteInfo};
+use super::json::{JsonDelegationPirPrecomputeResult, JsonNoteInfo, JsonWitnessData};
+
+/// Validate that a cached lightwalletd `TreeState` is anchored to the voting
+/// round it will be used for.
+///
+/// Witness generation trusts the cached Orchard frontier as the historical
+/// checkpoint input. The generated Merkle path can verify against that
+/// frontier's own root, so we must also enforce that the frontier is exactly
+/// the round snapshot: same block height and same note commitment tree root.
+fn validate_cached_tree_state_for_round(
+    tree_state: &TreeState,
+    orchard_root: &[u8],
+    params: &voting::VotingRoundParams,
+) -> anyhow::Result<()> {
+    if tree_state.height != params.snapshot_height {
+        return Err(anyhow!(
+            "cached TreeState height {} does not match round snapshot_height {}",
+            tree_state.height,
+            params.snapshot_height
+        ));
+    }
+
+    if orchard_root != params.nc_root.as_slice() {
+        return Err(anyhow!(
+            "cached TreeState orchard root does not match round nc_root"
+        ));
+    }
+
+    Ok(())
+}
+
+/// Generate Merkle inclusion witnesses for the notes in a bundle and cache
+/// them in the voting DB.
+///
+/// `notes_json` is a JSON-encoded `Vec<NoteInfo>`.
+///
+/// Returns JSON-encoded `Vec<WitnessData>` as `*mut FfiBoxedSlice`, or null on
+/// error.
+///
+/// # Safety
+///
+/// - `db` must be a valid, non-null `VotingDatabaseHandle` pointer.
+/// - For every `(ptr, len)` byte argument (`round_id`, `wallet_db_path`,
+///   `notes_json`): if `len > 0` then `ptr` must be non-null and valid for
+///   reads for `len` bytes; if `len == 0`, `ptr` is ignored. An empty
+///   `notes_json` is treated as the empty notes list (JSON is not parsed),
+///   and produces an empty witness list.
+/// - `network_id` must be `0` (testnet) or `1` (mainnet), matching other
+///   `zcashlc_*` FFI.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zcashlc_voting_generate_note_witnesses(
+    db: *mut VotingDatabaseHandle,
+    round_id: *const u8,
+    round_id_len: usize,
+    bundle_index: u32,
+    wallet_db_path: *const u8,
+    wallet_db_path_len: usize,
+    notes_json: *const u8,
+    notes_json_len: usize,
+    network_id: u32,
+) -> *mut crate::ffi::BoxedSlice {
+    let db = AssertUnwindSafe(db);
+    let res = catch_panic(|| {
+        let handle =
+            unsafe { db.as_ref() }.ok_or_else(|| anyhow!("VotingDatabaseHandle is null"))?;
+        let network = crate::parse_network(network_id)?;
+        let round_id_str = unsafe { str_from_ptr(round_id, round_id_len) }?;
+        let wallet_path_str = unsafe { str_from_ptr(wallet_db_path, wallet_db_path_len) }?;
+        let notes_bytes = unsafe { bytes_from_ptr(notes_json, notes_json_len) }?;
+        let json_notes: Vec<JsonNoteInfo> = if notes_bytes.is_empty() {
+            Vec::new()
+        } else {
+            serde_json::from_slice(notes_bytes)?
+        };
+        let core_notes: Vec<voting::NoteInfo> = json_notes.into_iter().map(Into::into).collect();
+
+        let (tree_state_bytes, params) = {
+            let wallet_id = handle.db.wallet_id();
+            let conn = handle.db.conn();
+            let tree_state_bytes =
+                voting::storage::queries::load_tree_state(&conn, &round_id_str, &wallet_id)
+                    .map_err(|e| anyhow!("load_tree_state failed: {}", e))?;
+            let params =
+                voting::storage::queries::load_round_params(&conn, &round_id_str, &wallet_id)
+                    .map_err(|e| anyhow!("load_round_params failed: {}", e))?;
+            (tree_state_bytes, params)
+        };
+
+        // Decode the tree state
+        let tree_state = TreeState::decode(tree_state_bytes.as_slice())
+            .map_err(|e| anyhow!("failed to decode TreeState protobuf: {}", e))?;
+        let orchard_ct = tree_state
+            .orchard_tree()
+            .map_err(|e| anyhow!("failed to parse orchard tree from TreeState: {}", e))?;
+        let frontier_root = orchard_ct.root();
+        let frontier_root_bytes = frontier_root.to_bytes();
+        validate_cached_tree_state_for_round(&tree_state, &frontier_root_bytes[..], &params)?;
+        let frontier = orchard_ct.to_frontier();
+        let nonempty_frontier = frontier.take().ok_or_else(|| {
+            anyhow!("empty orchard frontier — no orchard activity at snapshot height")
+        })?;
+
+        // Open the wallet DB
+        let wallet_db = zcash_client_sqlite::WalletDb::for_path(
+            &wallet_path_str,
+            network,
+            zcash_client_sqlite::util::SystemClock,
+            rand::rngs::OsRng,
+        )
+        .map_err(|e| anyhow!("failed to open wallet DB for tree operations: {}", e))?;
+
+        // Convert note positions to Merkle positions
+        let positions: Vec<Position> = core_notes
+            .iter()
+            .map(|n| Position::from(n.position))
+            .collect();
+
+        // Generate witnesses from wallet DB shard data + frontier
+        // `BlockHeight` is u32-backed; `snapshot_height` is u64. A wallet that
+        // somehow synced past u32::MAX blocks is impossible in protocol terms,
+        // but reject it explicitly rather than silently truncating.
+        let snapshot_height = u32::try_from(params.snapshot_height).map_err(|_| {
+            anyhow!(
+                "snapshot_height {} does not fit in u32",
+                params.snapshot_height
+            )
+        })?;
+        let checkpoint_height = zcash_protocol::consensus::BlockHeight::from_u32(snapshot_height);
+
+        // Generate witnesses from wallet DB shard data + frontier
+        let merkle_paths = wallet_db
+            .generate_orchard_witnesses_at_historical_height(
+                &positions,
+                nonempty_frontier,
+                checkpoint_height,
+            )
+            .map_err(|e| {
+                anyhow!(
+                    "generate_orchard_witnesses_at_historical_height failed: {}",
+                    e
+                )
+            })?;
+
+        // Convert MerklePaths to WitnessData
+        let root_bytes = frontier_root_bytes.to_vec();
+        let witnesses: Vec<voting::WitnessData> = merkle_paths
+            .into_iter()
+            .zip(core_notes.iter())
+            .map(|(path, note)| {
+                let auth_path: Vec<Vec<u8>> = path
+                    .path_elems()
+                    .iter()
+                    .map(|h| h.to_bytes().to_vec())
+                    .collect();
+                voting::WitnessData {
+                    note_commitment: note.commitment.clone(),
+                    position: note.position,
+                    root: root_bytes.clone(),
+                    auth_path,
+                }
+            })
+            .collect();
+
+        // Verify and cache in voting DB
+        handle
+            .db
+            .store_witnesses(&round_id_str, bundle_index, &witnesses)
+            .map_err(|e| anyhow!("store_witnesses failed: {}", e))?;
+
+        let json_witnesses: Vec<JsonWitnessData> = witnesses.into_iter().map(Into::into).collect();
+        json_to_boxed_slice(&json_witnesses)
+    });
+    unwrap_exc_or_null(res)
+}
+
+// =============================================================================
+// VotingDatabase methods — Delegation proof
+// =============================================================================
 
 // Keep PIR client construction at the SDK boundary so zcash_voting can accept
 // an injected transport. Today we use direct Hyper/Rustls. In the future this will be the
@@ -217,6 +397,61 @@ mod tests {
         }
     }
 
+    fn tree_state_at_height(height: u64) -> TreeState {
+        TreeState {
+            network: "test".to_string(),
+            height,
+            hash: String::new(),
+            time: 0,
+            sapling_tree: String::new(),
+            orchard_tree: String::new(),
+        }
+    }
+
+    fn round_params(snapshot_height: u64, nc_root: Vec<u8>) -> voting::VotingRoundParams {
+        voting::VotingRoundParams {
+            vote_round_id: "round1".to_string(),
+            snapshot_height,
+            ea_pk: vec![0; 32],
+            nc_root,
+            nullifier_imt_root: vec![0; 32],
+        }
+    }
+
+    #[test]
+    fn cached_tree_state_validation_accepts_matching_round() {
+        let root = [7; 32];
+        let tree_state = tree_state_at_height(100);
+        let params = round_params(100, root.to_vec());
+
+        assert!(validate_cached_tree_state_for_round(&tree_state, &root, &params).is_ok());
+    }
+
+    #[test]
+    fn cached_tree_state_validation_rejects_height_mismatch() {
+        let root = [7; 32];
+        let tree_state = tree_state_at_height(99);
+        let params = round_params(100, root.to_vec());
+
+        let error = validate_cached_tree_state_for_round(&tree_state, &root, &params)
+            .expect_err("height mismatch must be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("does not match round snapshot_height")
+        );
+    }
+
+    #[test]
+    fn cached_tree_state_validation_rejects_root_mismatch() {
+        let tree_state = tree_state_at_height(100);
+        let params = round_params(100, vec![7; 32]);
+
+        let error = validate_cached_tree_state_for_round(&tree_state, &[8; 32], &params)
+            .expect_err("root mismatch must be rejected");
+        assert!(error.to_string().contains("does not match round nc_root"));
+    }
+
     #[test]
     fn validate_pir_proof_accepts_valid() {
         let root = decode_hex::<32>(ROOT);
@@ -346,6 +581,60 @@ mod tests {
                 2,
                 b"https://example.com/".as_ptr(),
                 20,
+                99,
+            )
+        };
+        assert!(result.is_null());
+        unsafe { zcashlc_voting_db_free(db) };
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn generate_note_witnesses_rejects_null_db() {
+        let result = unsafe {
+            zcashlc_voting_generate_note_witnesses(
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                0,
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                0,
+                1,
+            )
+        };
+
+        assert!(result.is_null());
+    }
+
+    #[test]
+    fn generate_note_witnesses_rejects_invalid_network_id() {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "zcashlc_voting_generate_witnesses_network_test_{}.sqlite",
+            std::process::id()
+        ));
+        let path_bytes = path.to_string_lossy().as_bytes().to_vec();
+        let db = unsafe { zcashlc_voting_db_open(path_bytes.as_ptr(), path_bytes.len()) };
+        assert!(!db.is_null(), "open voting db");
+        let wallet = b"wallet-id";
+        assert_eq!(0, unsafe {
+            zcashlc_voting_set_wallet_id(db, wallet.as_ptr(), wallet.len())
+        });
+        // Network id 99 is invalid; the call must reject it before touching
+        // the wallet DB at the (non-existent) path.
+        let wallet_db_path = b"/nonexistent/wallet.sqlite";
+        let result = unsafe {
+            zcashlc_voting_generate_note_witnesses(
+                db,
+                b"round1".as_ptr(),
+                6,
+                0,
+                wallet_db_path.as_ptr(),
+                wallet_db_path.len(),
+                b"[]".as_ptr(),
+                2,
                 99,
             )
         };
