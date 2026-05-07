@@ -282,6 +282,9 @@ pub unsafe extern "C" fn zcashlc_voting_verify_witness(
 
 #[cfg(test)]
 mod tests {
+    use orchard::tree::Anchor;
+    use prost::Message;
+    use zcash_client_backend::proto::service::TreeState;
     use zcash_keys::keys::UnifiedSpendingKey;
     use zcash_protocol::consensus::Network;
     use zip32::Scope;
@@ -291,6 +294,13 @@ mod tests {
 
     fn free(ptr: *mut crate::ffi::BoxedSlice) {
         unsafe { crate::ffi::zcashlc_free_boxed_slice(ptr) };
+    }
+
+    fn boxed_slice_to_vec(ptr: *mut crate::ffi::BoxedSlice) -> Vec<u8> {
+        assert!(!ptr.is_null(), "expected non-null BoxedSlice");
+        let bytes = unsafe { (*ptr).as_slice() }.to_vec();
+        free(ptr);
+        bytes
     }
 
     fn derive_test_ufvk(network: Network) -> (String, [u8; 96]) {
@@ -325,9 +335,7 @@ mod tests {
     }
 
     fn delegation_inputs_from_ptr(ptr: *mut crate::ffi::BoxedSlice) -> JsonDelegationInputs {
-        assert!(!ptr.is_null(), "expected delegation inputs");
-        let json = unsafe { (*ptr).as_slice() }.to_vec();
-        free(ptr);
+        let json = boxed_slice_to_vec(ptr);
         serde_json::from_slice(&json).expect("delegation inputs json")
     }
 
@@ -500,5 +508,61 @@ mod tests {
         };
 
         assert!(result.is_null());
+    }
+
+    #[test]
+    fn extract_pczt_sighash_rejects_invalid_pczt_bytes() {
+        let bogus = b"not a pczt";
+
+        let result = unsafe { zcashlc_voting_extract_pczt_sighash(bogus.as_ptr(), bogus.len()) };
+
+        assert!(result.is_null());
+    }
+
+    #[test]
+    fn extract_spend_auth_sig_rejects_invalid_pczt_bytes() {
+        let bogus = b"not a signed pczt";
+
+        let result =
+            unsafe { zcashlc_voting_extract_spend_auth_sig(bogus.as_ptr(), bogus.len(), 0) };
+
+        assert!(result.is_null());
+    }
+
+    #[test]
+    fn extract_nc_root_returns_empty_orchard_root_for_empty_tree_state() {
+        let tree_state = TreeState {
+            network: "main".to_string(),
+            height: 1,
+            hash: "00".repeat(32),
+            time: 0,
+            sapling_tree: String::new(),
+            orchard_tree: String::new(),
+        };
+        let tree_state_bytes = tree_state.encode_to_vec();
+
+        let result = unsafe {
+            zcashlc_voting_extract_nc_root(tree_state_bytes.as_ptr(), tree_state_bytes.len())
+        };
+
+        let root = boxed_slice_to_vec(result);
+        assert_eq!(root.len(), 32);
+        assert_eq!(root, Anchor::empty_tree().to_bytes().to_vec());
+    }
+
+    #[test]
+    fn verify_witness_returns_zero_for_wrong_root() {
+        let witness = JsonWitnessData {
+            note_commitment: vec![0; 32],
+            position: 0,
+            root: Anchor::empty_tree().to_bytes().to_vec(),
+            auth_path: (0..32).map(|_| vec![0; 32]).collect(),
+        };
+        let witness_json = serde_json::to_vec(&witness).expect("witness json");
+
+        let result =
+            unsafe { zcashlc_voting_verify_witness(witness_json.as_ptr(), witness_json.len()) };
+
+        assert_eq!(result, 0);
     }
 }
