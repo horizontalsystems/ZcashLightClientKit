@@ -15,6 +15,8 @@ use super::ffi_types::FfiVotingHotkey;
 // Helper functions
 // =============================================================================
 
+const MIN_SEED_LEN: usize = 32;
+
 /// Borrow a byte slice from a raw `(ptr, len)` pair.
 ///
 /// When `len == 0`, returns an empty slice without reading `ptr`, so `ptr` may be null.
@@ -135,6 +137,14 @@ pub(super) fn usk_from_seed(
     seed: &[u8],
     account: AccountId,
 ) -> anyhow::Result<UnifiedSpendingKey> {
+    if seed.len() < MIN_SEED_LEN {
+        return Err(anyhow!(
+            "seed must be at least {} bytes, got {}",
+            MIN_SEED_LEN,
+            seed.len()
+        ));
+    }
+
     let network = crate::parse_network(network_id)?;
     let usk = UnifiedSpendingKey::from_seed(&network, seed, account)
         .map_err(|e| anyhow!("failed to derive UnifiedSpendingKey: {}", e))?;
@@ -264,6 +274,19 @@ mod tests {
             expected_testnet
                 .to_unified_full_viewing_key()
                 .encode(&TEST_NETWORK)
+        );
+    }
+
+    #[test]
+    fn usk_from_seed_rejects_short_seed() {
+        let seed = [7u8; MIN_SEED_LEN - 1];
+        let account = AccountId::try_from(0).expect("account 0");
+
+        let err = usk_from_seed(1, &seed, account).expect_err("short seed");
+
+        assert!(
+            err.to_string()
+                .contains("seed must be at least 32 bytes, got 31")
         );
     }
 }

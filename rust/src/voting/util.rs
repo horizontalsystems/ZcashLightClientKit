@@ -18,7 +18,6 @@ use super::json::{JsonDelegationInputs, JsonWitnessData};
 // =============================================================================
 
 const HOTKEY_ACCOUNT_INDEX: u32 = 0;
-const MIN_SEED_LEN: usize = 32;
 
 fn hotkey_account() -> AccountId {
     AccountId::try_from(HOTKEY_ACCOUNT_INDEX).expect("hotkey account 0 is valid")
@@ -73,21 +72,6 @@ pub unsafe extern "C" fn zcashlc_voting_generate_delegation_inputs(
     let res = catch_panic(|| {
         let sender = unsafe { bytes_from_ptr(sender_seed, sender_seed_len) }?;
         let hotkey = unsafe { bytes_from_ptr(hotkey_seed, hotkey_seed_len) }?;
-
-        if sender.len() < MIN_SEED_LEN {
-            return Err(anyhow!(
-                "sender_seed must be at least {} bytes, got {}",
-                MIN_SEED_LEN,
-                sender.len()
-            ));
-        }
-        if hotkey.len() < MIN_SEED_LEN {
-            return Err(anyhow!(
-                "hotkey_seed must be at least {} bytes, got {}",
-                MIN_SEED_LEN,
-                hotkey.len()
-            ));
-        }
 
         let account = AccountId::try_from(account_index)
             .map_err(|_| anyhow!("account_index must be < 2^31, got {}", account_index))?;
@@ -147,13 +131,6 @@ pub unsafe extern "C" fn zcashlc_voting_generate_delegation_inputs_with_fvk(
 
         if fvk.len() != 96 {
             return Err(anyhow!("fvk_bytes must be 96 bytes, got {}", fvk.len()));
-        }
-        if hotkey.len() < MIN_SEED_LEN {
-            return Err(anyhow!(
-                "hotkey_seed must be at least {} bytes, got {}",
-                MIN_SEED_LEN,
-                hotkey.len()
-            ));
         }
         if seed_fp.len() != 32 {
             return Err(anyhow!(
