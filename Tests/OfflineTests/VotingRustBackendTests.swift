@@ -213,7 +213,7 @@ final class VotingRustBackendTests: XCTestCase {
                 pirEndpoints: ["https://stub"],
                 expectedSnapshotHeight: 0,
                 networkId: 1,
-                pirResolver: PirSnapshotResolver(probe: AlwaysMatchingProbe())
+                pirResolver: PirSnapshotResolver(probe: FailingProbe())
             )
             XCTFail("expected .databaseNotOpen")
         } catch let error as VotingRustBackendError {
@@ -291,5 +291,13 @@ final class VotingRustBackendTests: XCTestCase {
 private struct AlwaysMatchingProbe: PirSnapshotProbing {
     func probe(url: String, expectedSnapshotHeight: BlockHeight) async -> PirSnapshotProbeOutcome {
         PirSnapshotProbeOutcome(url: url, status: .matching(height: expectedSnapshotHeight))
+    }
+}
+
+/// Probe stub used where endpoint probing must not happen.
+private struct FailingProbe: PirSnapshotProbing {
+    func probe(url: String, expectedSnapshotHeight: BlockHeight) async -> PirSnapshotProbeOutcome {
+        XCTFail("closed voting backend should fail before probing PIR endpoints")
+        return PirSnapshotProbeOutcome(url: url, status: .matching(height: expectedSnapshotHeight))
     }
 }

@@ -138,6 +138,8 @@ extension VotingRustBackend {
         networkId: UInt32,
         pirResolver: PirSnapshotResolver = PirSnapshotResolver()
     ) async throws -> VotingDelegationPirPrecomputeResult {
+        try requireOpenDatabase()
+
         // PirSnapshotResolver expects `BlockHeight` (Int); voting snapshot
         // heights are `UInt64` everywhere else in the voting types, so convert
         // at the boundary. Snapshot heights well within Int.max in practice.
@@ -323,6 +325,15 @@ private extension VotingRustBackend {
             throw VotingRustBackendError.databaseNotOpen
         }
         return try operation(dbh)
+    }
+
+    func requireOpenDatabase() throws {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard handle != nil else {
+            throw VotingRustBackendError.databaseNotOpen
+        }
     }
 
     func lastErrorMessage(fallback: String) -> String {
