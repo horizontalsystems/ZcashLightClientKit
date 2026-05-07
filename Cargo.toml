@@ -83,7 +83,10 @@ rust_decimal = { version = "1", default-features = false, features = ["c-repr"] 
 xz2 = { version = "0.1", features = ["static"] }
 
 # Voting
-zcash_voting = { version = "0.5.2", default-features = false, features = ["client-pir"] }
+zcash_voting = { version = "0.5.2", default-features = false, features = [
+    "client-pir",
+    "client-tree-sync",
+] }
 
 [build-dependencies]
 bindgen = "0.72"

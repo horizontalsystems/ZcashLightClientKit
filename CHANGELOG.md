@@ -19,10 +19,12 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `Broadcaster.createTransactionFromPCZT(pcztWithProofs:pcztWithSigs:)` — extracts and stores a transaction from PCZT data without submitting.
   - `Broadcaster.submit(_:to:)` — submits raw transaction bytes to a specific `LightWalletEndpoint`. Respects Tor configuration.
 - `Synchronizer.broadcaster` property, also exposed through the closure and Combine synchronizer facades, to access the `Broadcaster` from SDK synchronizer instances.
+- `libzcashlc` voting tree-sync FFI: `zcashlc_voting_sync_vote_tree`, `zcashlc_voting_generate_van_witness`, and `zcashlc_voting_reset_tree_client`. Operate on the existing `VotingDatabaseHandle`, which also carries a `zcash_voting::tree_sync::VoteTreeSync` constructed in `zcashlc_voting_db_open`.
 
 ## Changed
 - Bumped Rust dependencies to current crates.io releases (`zcash_address` 0.10→0.11, `zcash_client_backend` 0.21→0.22, `zcash_client_sqlite` 0.19→0.20, `zcash_primitives`/`zcash_proofs` 0.26→0.27, `zcash_protocol` 0.7→0.8, `zcash_transparent` 0.6→0.7, `sapling-crypto` 0.6→0.7, `orchard` 0.12→0.13, `pczt` 0.5→0.6) and removed the `[patch.crates-io]` git-rev overrides. No public Swift API changes.
 - Pinned `orchard` to `=0.13.1` and enabled its `unstable-voting-circuits` feature, required transitively by `zcash_voting`. No public Swift API changes.
+- Enabled the `client-tree-sync` feature on `zcash_voting`, required by the new voting tree-sync FFI listed above.
 
 # 2.4.9 - 2026-04-04
 

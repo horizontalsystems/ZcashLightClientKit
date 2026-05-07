@@ -46,3 +46,24 @@ impl From<voting::DelegationPirPrecomputeResult> for JsonDelegationPirPrecompute
         }
     }
 }
+
+/// JSON-serializable VanWitness.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct JsonVanWitness {
+    /// The authentication path for the witness.
+    pub auth_path: Vec<Vec<u8>>,
+    /// The position of the witness.
+    pub position: u32,
+    /// The anchor height of the witness.
+    pub anchor_height: u32,
+}
+
+impl From<voting::tree_sync::VanWitness> for JsonVanWitness {
+    fn from(w: voting::tree_sync::VanWitness) -> Self {
+        Self {
+            auth_path: w.auth_path.iter().map(|h| h.to_vec()).collect(),
+            position: w.position,
+            anchor_height: w.anchor_height,
+        }
+    }
+}

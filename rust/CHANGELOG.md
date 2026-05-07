@@ -21,12 +21,26 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `zcashlc_voting_precompute_delegation_pir`: Precompute and cache delegation
   PIR IMT proofs for a voting bundle using the configured voting database and
   caller-supplied PIR endpoint.
+- `zcashlc_voting_sync_vote_tree`: Sync the vote commitment tree for a round
+  from a chain node URL, returning the latest synced block height (>= 0) on
+  success, or -1 on error.
+- `zcashlc_voting_generate_van_witness`: Generate a vote authroity note Merkle witness for
+  the second voting ZKP and return it as a JSON-encoded `VanWitness`
+  (`auth_path`, `position`, `anchor_height`) in a `*mut FfiBoxedSlice`.
+- `zcashlc_voting_reset_tree_client`: Drop the in-memory tree client for a
+  round so the next `zcashlc_voting_sync_vote_tree` call creates a fresh one.
+- `VotingDatabaseHandle` now also carries a
+  `zcash_voting::tree_sync::VoteTreeSync`, constructed in
+  `zcashlc_voting_db_open` and consumed by the tree-sync FFI above.
 - Added `zcash_voting 0.5.2` (`default-features = false`, `client-pir`) as a
   Rust dependency.
 
 ### Changed
 - Pinned `orchard` to `=0.13.1` and enabled its `unstable-voting-circuits`
   feature (required transitively by `zcash_voting`).
+- Enabled the `client-tree-sync` feature on `zcash_voting`, required by the
+  new tree-sync FFI symbols and by the `VoteTreeSync` field on
+  `VotingDatabaseHandle`.
 
 ## 2.4.6 - 2026-03-12
 
