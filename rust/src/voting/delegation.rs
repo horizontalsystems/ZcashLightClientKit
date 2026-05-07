@@ -178,7 +178,7 @@ mod tests {
     };
 
     // Golden proof generated from zcash_voting's test-only TestImt helper:
-    // https://github.com/valargroup/zcash_voting/blob/zcash_voting-v0.5.2/zcash_voting/src/zkp1.rs#L573-L708
+    // https://github.com/valargroup/zcash_voting/blob/zcash_voting-v0.5.3/zcash_voting/src/zkp1.rs#L573-L708
     // Keeping the fixture as bytes preserves FFI coverage without direct SDK
     // dev-dependencies on halo2_gadgets or voting-circuits internals.
     const ROOT: &str = "8a9fa2daeb635fbb006af674259cea05e59d71b9a4773e7433942a14ab031801";
