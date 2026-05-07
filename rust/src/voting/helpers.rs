@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::ffi::CString;
 
 use anyhow::anyhow;
@@ -119,6 +117,7 @@ pub(super) fn open_wallet_db(
         .map_err(|e| anyhow!("failed to open wallet DB: {}", e))
 }
 
+#[allow(dead_code)]
 pub(super) fn round_phase_to_u32(phase: voting::storage::RoundPhase) -> u32 {
     use voting::storage::RoundPhase::*;
 
@@ -191,6 +190,7 @@ pub(super) fn derive_hotkey_side_inputs(
 // =============================================================================
 
 /// Convert a `voting::VotingHotkey` to the FFI representation.
+#[allow(dead_code)]
 pub(super) fn voting_hotkey_to_ffi(
     hotkey: voting::VotingHotkey,
 ) -> anyhow::Result<FfiVotingHotkey> {
