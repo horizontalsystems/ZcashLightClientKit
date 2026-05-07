@@ -14,6 +14,11 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PirSnapshotResolver`, `PirSnapshotResolverError`, `PirSnapshotProbeOutcome`, `PirSnapshotProbing`, and `HTTPPirSnapshotProbe`: Select a vote-nullifier PIR endpoint whose `/root` metadata exactly matches a voting round's expected snapshot height.
 - `Voting*` Swift types: public type contract for the shielded voting FFI boundary, in `Sources/ZcashLightClientKit/Rust/Voting/VotingTypes.swift`.
 - `VotingRustBackend`: Swift wrapper for the voting `libzcashlc` surface. Exposes the static `computeShareNullifier` over `zcashlc_voting_compute_share_nullifier` and the `VotingRustBackendError` error type.
+- `Broadcaster` protocol — separates transaction creation from submission, enabling custom broadcast strategies (e.g. submitting to multiple lightwalletd servers in parallel).
+  - `Broadcaster.createProposedTransactions(proposal:spendingKey:)` — creates transactions locally without broadcasting, returning `[ZcashTransaction.Overview]` with raw bytes.
+  - `Broadcaster.createTransactionFromPCZT(pcztWithProofs:pcztWithSigs:)` — extracts and stores a transaction from PCZT data without submitting.
+  - `Broadcaster.submit(_:to:)` — submits raw transaction bytes to a specific `LightWalletEndpoint`. Respects Tor configuration.
+- `Synchronizer.broadcaster` property, also exposed through the closure and Combine synchronizer facades, to access the `Broadcaster` from SDK synchronizer instances.
 
 ## Changed
 - Bumped Rust dependencies to current crates.io releases (`zcash_address` 0.10→0.11, `zcash_client_backend` 0.21→0.22, `zcash_client_sqlite` 0.19→0.20, `zcash_primitives`/`zcash_proofs` 0.26→0.27, `zcash_protocol` 0.7→0.8, `zcash_transparent` 0.6→0.7, `sapling-crypto` 0.6→0.7, `orchard` 0.12→0.13, `pczt` 0.5→0.6) and removed the `[patch.crates-io]` git-rev overrides. No public Swift API changes.

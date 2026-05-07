@@ -55,6 +55,14 @@ public class SDKSynchronizer: Synchronizer {
     private let syncSessionTicker: SessionTicker
     var latestBlocksDataProvider: LatestBlocksDataProvider
 
+    private var broadcasterStorage: Broadcaster?
+    public var broadcaster: Broadcaster {
+        guard let broadcaster = broadcasterStorage else {
+            preconditionFailure("Broadcaster accessed before initialization")
+        }
+        return broadcaster
+    }
+
     /// Creates an SDKSynchronizer instance
     /// - Parameter initializer: a wallet Initializer object
     public convenience init(initializer: Initializer) {
@@ -93,6 +101,20 @@ public class SDKSynchronizer: Synchronizer {
         self.syncSessionTicker = syncSessionTicker
         self.latestBlocksDataProvider = initializer.container.resolve(LatestBlocksDataProvider.self)
         self.sdkFlags = initializer.container.resolve(SDKFlags.self)
+
+        self.broadcasterStorage = SDKBroadcaster(
+            transactionEncoder: transactionEncoder,
+            initializer: initializer,
+            sdkFlags: sdkFlags,
+            logger: logger,
+            eventSubject: eventSubject,
+            statusCheck: { [weak self] in
+                guard let self else {
+                    throw ZcashError.synchronizerNotPrepared
+                }
+                try self.throwIfUnprepared()
+            }
+        )
 
         initializer.lightWalletService.connectionStateChange = { [weak self] oldState, newState in
             self?.connectivityStateChanged(oldState: oldState, newState: newState)
@@ -425,17 +447,7 @@ public class SDKSynchronizer: Synchronizer {
         proposal: Proposal,
         spendingKey: UnifiedSpendingKey
     ) async throws -> AsyncThrowingStream<TransactionSubmitResult, Error> {
-        try throwIfUnprepared()
-
-        try await SaplingParameterDownloader.downloadParamsIfnotPresent(
-            spendURL: initializer.spendParamsURL,
-            spendSourceURL: initializer.saplingParamsSourceURL.spendParamFileURL,
-            outputURL: initializer.outputParamsURL,
-            outputSourceURL: initializer.saplingParamsSourceURL.outputParamFileURL,
-            logger: logger
-        )
-
-        let transactions = try await transactionEncoder.createProposedTransactions(
+        let transactions = try await broadcaster.createProposedTransactions(
             proposal: proposal,
             spendingKey: spendingKey
         )
@@ -446,11 +458,6 @@ public class SDKSynchronizer: Synchronizer {
     func submitTransactions(_ transactions: [ZcashTransaction.Overview]) -> AsyncThrowingStream<TransactionSubmitResult, Error> {
         var iterator = transactions.makeIterator()
         var submitFailed = false
-
-        // let clients know the transaction repository changed
-        if !transactions.isEmpty {
-            eventSubject.send(.foundTransactions(transactions, nil))
-        }
         
         return AsyncThrowingStream() {
             guard let transaction = iterator.next() else { return nil }
@@ -512,22 +519,10 @@ public class SDKSynchronizer: Synchronizer {
     }
     
     public func createTransactionFromPCZT(pcztWithProofs: Pczt, pcztWithSigs: Pczt) async throws -> AsyncThrowingStream<TransactionSubmitResult, Error> {
-        try throwIfUnprepared()
-
-        try await SaplingParameterDownloader.downloadParamsIfnotPresent(
-            spendURL: initializer.spendParamsURL,
-            spendSourceURL: initializer.saplingParamsSourceURL.spendParamFileURL,
-            outputURL: initializer.outputParamsURL,
-            outputSourceURL: initializer.saplingParamsSourceURL.outputParamFileURL,
-            logger: logger
-        )
-
-        let txId = try await initializer.rustBackend.extractAndStoreTxFromPCZT(
+        let transactions = try await broadcaster.createTransactionFromPCZT(
             pcztWithProofs: pcztWithProofs,
             pcztWithSigs: pcztWithSigs
         )
-
-        let transactions = try await transactionEncoder.fetchTransactionsForTxIds([txId])
         
         return submitTransactions(transactions)
     }
