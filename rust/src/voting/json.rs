@@ -367,23 +367,3 @@ impl From<voting::tree_sync::VanWitness> for JsonVanWitness {
         }
     }
 }
-
-/// JSON-serializable WitnessData.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct JsonWitnessData {
-    pub note_commitment: Vec<u8>,
-    pub position: u64,
-    pub root: Vec<u8>,
-    pub auth_path: Vec<Vec<u8>>,
-}
-
-impl From<voting::WitnessData> for JsonWitnessData {
-    fn from(w: voting::WitnessData) -> Self {
-        Self {
-            note_commitment: w.note_commitment,
-            position: w.position,
-            root: w.root,
-            auth_path: w.auth_path,
-        }
-    }
-}
