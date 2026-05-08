@@ -45,6 +45,10 @@ fn validate_cached_tree_state_for_round(
     Ok(())
 }
 
+// =============================================================================
+// VotingDatabase methods — Delegation proof
+// =============================================================================
+
 /// Generate Merkle inclusion witnesses for the notes in a bundle and cache
 /// them in the voting DB.
 ///
@@ -186,10 +190,6 @@ pub unsafe extern "C" fn zcashlc_voting_generate_note_witnesses(
     });
     unwrap_exc_or_null(res)
 }
-
-// =============================================================================
-// VotingDatabase methods — Delegation proof
-// =============================================================================
 
 // Keep PIR client construction at the SDK boundary so zcash_voting can accept
 // an injected transport. Today we use direct Hyper/Rustls. In the future this will be the
