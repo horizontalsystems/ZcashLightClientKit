@@ -360,18 +360,10 @@ mod tests {
 
     fn insert_vote(db: *mut VotingDatabaseHandle, round_id: &str) {
         let handle = unsafe { db.as_ref() }.expect("voting db handle");
-        let wallet_id = handle.db.wallet_id();
-        let conn = handle.db.conn();
-        zcash_voting::storage::queries::store_vote(
-            &conn,
-            round_id,
-            &wallet_id,
-            0,
-            0,
-            0,
-            &[0xaa; 32],
-        )
-        .expect("insert vote");
+        handle
+            .db
+            .insert_vote_fixture(round_id, 0, 0, 0, &[0xaa; 32])
+            .expect("insert vote");
     }
 
     #[test]

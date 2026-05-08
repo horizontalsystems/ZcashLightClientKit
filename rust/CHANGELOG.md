@@ -61,7 +61,7 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   return the raw 96-byte Orchard full viewing key in a
   `*mut FfiBoxedSlice`. Returns `NULL` on missing Orchard component,
   malformed UFVK, or invalid `network_id`.
-- Added `zcash_voting 0.5.3` (`default-features = false`, `client-pir`,
+- Added `zcash_voting 0.5.6` (`default-features = false`, `client-pir`,
   `client-tree-sync`) as a Rust dependency.
 - Added `zcash_keys 0.13` (`orchard` feature) as a Rust dependency, used by
   the new wallet-notes and key-utility FFI for voting to decode UFVKs and derive
@@ -76,6 +76,8 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enabled the `client-tree-sync` feature on `zcash_voting`, required by the
   new tree-sync FFI symbols and by the `VoteTreeSync` field on
   `VotingDatabaseHandle`.
+- Bumped `zcash_voting` to `0.5.6`, including upstream voting submission
+  validation fixes and a test-fixture helper used by the Rust FFI tests.
 
 ## 2.4.6 - 2026-03-12
 
