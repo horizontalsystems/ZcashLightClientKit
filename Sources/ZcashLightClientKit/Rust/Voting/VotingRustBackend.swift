@@ -262,6 +262,232 @@ extension VotingRustBackend {
     }
 }
 
+// MARK: - Delegation witnesses
+
+extension VotingRustBackend {
+    /// Generate Merkle inclusion witnesses for a bundle's notes and cache them
+    /// in the voting database.
+    public func generateNoteWitnesses(
+        roundId: String,
+        bundleIndex: UInt32,
+        walletDbPath: String,
+        notes: [VotingNoteInfo],
+        networkId: UInt32
+    ) throws -> [VotingWitnessData] {
+        let roundIdBytes = [UInt8](roundId.utf8)
+        let walletPathBytes = [UInt8](walletDbPath.utf8)
+        let notesJson = try JSONEncoder().encode(notes)
+        let notesBytes = [UInt8](notesJson)
+
+        let ptr: UnsafeMutablePointer<FfiBoxedSlice> = try withHandle { dbh in
+            let ptr: UnsafeMutablePointer<FfiBoxedSlice>? = roundIdBytes.withUnsafeBufferPointer { ridBuf in
+                walletPathBytes.withUnsafeBufferPointer { pathBuf in
+                    notesBytes.withUnsafeBufferPointer { notesBuf in
+                        zcashlc_voting_generate_note_witnesses(
+                            dbh,
+                            ridBuf.baseAddress,
+                            UInt(ridBuf.count),
+                            bundleIndex,
+                            pathBuf.baseAddress,
+                            UInt(pathBuf.count),
+                            notesBuf.baseAddress,
+                            UInt(notesBuf.count),
+                            networkId
+                        )
+                    }
+                }
+            }
+
+            guard let ptr else {
+                throw VotingRustBackendError.rustError(
+                    lastErrorMessage(fallback: "`generate_note_witnesses` failed")
+                )
+            }
+            return ptr
+        }
+        defer { zcashlc_free_boxed_slice(ptr) }
+        return try decodeJSON(from: ptr)
+    }
+}
+
+// MARK: - Vote casting
+
+extension VotingRustBackend {
+    /// Encrypt voting shares for a round.
+    public func encryptShares(roundId: String, shares: [UInt64]) throws -> [VotingWireEncryptedShare] {
+        let roundIdBytes = [UInt8](roundId.utf8)
+        let sharesJson = try JSONEncoder().encode(shares)
+        let sharesBytes = [UInt8](sharesJson)
+
+        let ptr: UnsafeMutablePointer<FfiBoxedSlice> = try withHandle { dbh in
+            let ptr: UnsafeMutablePointer<FfiBoxedSlice>? = roundIdBytes.withUnsafeBufferPointer { ridBuf in
+                sharesBytes.withUnsafeBufferPointer { sharesBuf in
+                    zcashlc_voting_encrypt_shares(
+                        dbh,
+                        ridBuf.baseAddress,
+                        UInt(ridBuf.count),
+                        sharesBuf.baseAddress,
+                        UInt(sharesBuf.count)
+                    )
+                }
+            }
+
+            guard let ptr else {
+                throw VotingRustBackendError.rustError(lastErrorMessage(fallback: "`encrypt_shares` failed"))
+            }
+            return ptr
+        }
+        defer { zcashlc_free_boxed_slice(ptr) }
+        return try decodeJSON(from: ptr)
+    }
+
+    /// Build a vote commitment proof for a proposal.
+    ///
+    /// The proof callback may be invoked from Rust worker threads. Do not call
+    /// back into this backend from `progress`, because the database handle lock
+    /// is held while the FFI call is active.
+    // swiftlint:disable:next function_parameter_count
+    public func buildVoteCommitment(
+        roundId: String,
+        bundleIndex: UInt32,
+        hotkeySeed: [UInt8],
+        networkId: UInt32,
+        proposalId: UInt32,
+        choice: UInt32,
+        numOptions: UInt32,
+        vanWitness: VotingVanWitness,
+        singleShare: Bool,
+        progress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> VotingVoteCommitmentBundle {
+        try requireOpenDatabase()
+
+        return try await Task.detached { [self] in
+            try syncBuildVoteCommitment(
+                roundId: roundId,
+                bundleIndex: bundleIndex,
+                hotkeySeed: hotkeySeed,
+                networkId: networkId,
+                proposalId: proposalId,
+                choice: choice,
+                numOptions: numOptions,
+                vanWitness: vanWitness,
+                singleShare: singleShare,
+                progress: progress
+            )
+        }.value
+    }
+
+    /// Build delegated share-submission payloads from a vote commitment bundle.
+    public func buildSharePayloads(
+        commitment: VotingVoteCommitmentBundle,
+        voteDecision: UInt32,
+        numOptions: UInt32,
+        voteCommitmentTreePosition: UInt64,
+        singleShare: Bool
+    ) throws -> [VotingSharePayload] {
+        let commitmentJson = try JSONEncoder().encode(commitment)
+        let commitmentBytes = [UInt8](commitmentJson)
+
+        let ptr: UnsafeMutablePointer<FfiBoxedSlice> = try withHandle { dbh in
+            let ptr: UnsafeMutablePointer<FfiBoxedSlice>? = commitmentBytes.withUnsafeBufferPointer { commitmentBuf in
+                zcashlc_voting_build_share_payloads(
+                    dbh,
+                    commitmentBuf.baseAddress,
+                    UInt(commitmentBuf.count),
+                    voteDecision,
+                    numOptions,
+                    voteCommitmentTreePosition,
+                    singleShare ? 1 : 0
+                )
+            }
+
+            guard let ptr else {
+                throw VotingRustBackendError.rustError(
+                    lastErrorMessage(fallback: "`build_share_payloads` failed")
+                )
+            }
+            return ptr
+        }
+        defer { zcashlc_free_boxed_slice(ptr) }
+        return try decodeJSON(from: ptr)
+    }
+
+    /// Mark a vote as submitted for a specific proposal and bundle.
+    public func markVoteSubmitted(
+        roundId: String,
+        bundleIndex: UInt32,
+        proposalId: UInt32
+    ) throws {
+        let roundIdBytes = [UInt8](roundId.utf8)
+
+        try withHandle { dbh in
+            let result = roundIdBytes.withUnsafeBufferPointer { buf in
+                zcashlc_voting_mark_vote_submitted(
+                    dbh,
+                    buf.baseAddress,
+                    UInt(buf.count),
+                    bundleIndex,
+                    proposalId
+                )
+            }
+
+            guard result == 0 else {
+                throw VotingRustBackendError.rustError(lastErrorMessage(fallback: "`mark_vote_submitted` failed"))
+            }
+        }
+    }
+
+    /// Sign a cast-vote transaction using fields from a vote commitment bundle.
+    public static func signCastVote(
+        hotkeySeed: [UInt8],
+        networkId: UInt32,
+        commitment: VotingVoteCommitmentBundle
+    ) throws -> VotingCastVoteSignature {
+        let roundIdBytes = [UInt8](commitment.voteRoundId.utf8)
+
+        let ptr: UnsafeMutablePointer<FfiBoxedSlice>? = hotkeySeed.withUnsafeBufferPointer { seedBuf in
+            roundIdBytes.withUnsafeBufferPointer { roundBuf in
+                commitment.rVpkBytes.withUnsafeBufferPointer { rVpkBuf in
+                    commitment.vanNullifier.withUnsafeBufferPointer { vanNullifierBuf in
+                        commitment.voteAuthorityNoteNew.withUnsafeBufferPointer { vanNewBuf in
+                            commitment.voteCommitment.withUnsafeBufferPointer { voteCommitmentBuf in
+                                commitment.alphaV.withUnsafeBufferPointer { alphaBuf in
+                                    zcashlc_voting_sign_cast_vote(
+                                        seedBuf.baseAddress,
+                                        UInt(seedBuf.count),
+                                        networkId,
+                                        roundBuf.baseAddress,
+                                        UInt(roundBuf.count),
+                                        rVpkBuf.baseAddress,
+                                        UInt(rVpkBuf.count),
+                                        vanNullifierBuf.baseAddress,
+                                        UInt(vanNullifierBuf.count),
+                                        vanNewBuf.baseAddress,
+                                        UInt(vanNewBuf.count),
+                                        voteCommitmentBuf.baseAddress,
+                                        UInt(voteCommitmentBuf.count),
+                                        commitment.proposalId,
+                                        commitment.anchorHeight,
+                                        alphaBuf.baseAddress,
+                                        UInt(alphaBuf.count)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        guard let ptr else {
+            throw VotingRustBackendError.rustError(staticLastErrorMessage(fallback: "`sign_cast_vote` failed"))
+        }
+        defer { zcashlc_free_boxed_slice(ptr) }
+        let data = Data(bytes: ptr.pointee.ptr, count: Int(ptr.pointee.len))
+        return try JSONDecoder().decode(VotingCastVoteSignature.self, from: data)
+    }
+}
+
 // MARK: - Share tracking (static)
 
 extension VotingRustBackend {
@@ -1578,6 +1804,72 @@ private extension VotingRustBackend {
     func decodeJSON<T: Decodable>(from ptr: UnsafeMutablePointer<FfiBoxedSlice>) throws -> T {
         let data = Data(bytes: ptr.pointee.ptr, count: Int(ptr.pointee.len))
         return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    /// Synchronous body of `buildVoteCommitment`. Runs inside `Task.detached`
+    /// so proving does not block the caller's executor.
+    // swiftlint:disable:next function_parameter_count
+    func syncBuildVoteCommitment(
+        roundId: String,
+        bundleIndex: UInt32,
+        hotkeySeed: [UInt8],
+        networkId: UInt32,
+        proposalId: UInt32,
+        choice: UInt32,
+        numOptions: UInt32,
+        vanWitness: VotingVanWitness,
+        singleShare: Bool,
+        progress: (@Sendable (Double) -> Void)?
+    ) throws -> VotingVoteCommitmentBundle {
+        let roundIdBytes = [UInt8](roundId.utf8)
+        let authPathJson = try JSONEncoder().encode(vanWitness.authPath)
+        let authPathBytes = [UInt8](authPathJson)
+
+        let progressBox = progress.map(VotingProgressBox.init(report:))
+        let progressContext = progressBox.map { Unmanaged.passRetained($0).toOpaque() }
+        defer {
+            if let progressContext {
+                Unmanaged<VotingProgressBox>.fromOpaque(progressContext).release()
+            }
+        }
+        let trampoline: VotingProgressCallback? = progressBox == nil ? nil : votingProgressCallbackTrampoline
+
+        let ptr: UnsafeMutablePointer<FfiBoxedSlice> = try withHandle { dbh in
+            let ptr: UnsafeMutablePointer<FfiBoxedSlice>? = roundIdBytes.withUnsafeBufferPointer { ridBuf in
+                hotkeySeed.withUnsafeBufferPointer { seedBuf in
+                    authPathBytes.withUnsafeBufferPointer { pathBuf in
+                        zcashlc_voting_build_vote_commitment(
+                            dbh,
+                            ridBuf.baseAddress,
+                            UInt(ridBuf.count),
+                            bundleIndex,
+                            seedBuf.baseAddress,
+                            UInt(seedBuf.count),
+                            networkId,
+                            proposalId,
+                            choice,
+                            numOptions,
+                            pathBuf.baseAddress,
+                            UInt(pathBuf.count),
+                            vanWitness.position,
+                            vanWitness.anchorHeight,
+                            trampoline,
+                            progressContext,
+                            singleShare ? 1 : 0
+                        )
+                    }
+                }
+            }
+
+            guard let ptr else {
+                throw VotingRustBackendError.rustError(
+                    lastErrorMessage(fallback: "`build_vote_commitment` failed")
+                )
+            }
+            return ptr
+        }
+        defer { zcashlc_free_boxed_slice(ptr) }
+        return try decodeJSON(from: ptr)
     }
 
     /// Reads the last error recorded by `libzcashlc` and clears it as a side

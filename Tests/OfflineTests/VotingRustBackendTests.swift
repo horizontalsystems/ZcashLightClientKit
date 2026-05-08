@@ -985,6 +985,24 @@ final class VotingRustBackendTests: XCTestCase {
         }
     }
 
+    func test_generateNoteWitnesses_beforeOpen_throwsDatabaseNotOpen() {
+        let backend = VotingRustBackend()
+        XCTAssertThrowsError(
+            try backend.generateNoteWitnesses(
+                roundId: "round1",
+                bundleIndex: 0,
+                walletDbPath: "/tmp/wallet.sqlite",
+                notes: [],
+                networkId: 1
+            )
+        ) { error in
+            guard case VotingRustBackendError.databaseNotOpen = error else {
+                XCTFail("expected .databaseNotOpen, got \(error)")
+                return
+            }
+        }
+    }
+
     func test_buildAndProveDelegation_beforeOpen_throwsDatabaseNotOpen() async {
         let backend = VotingRustBackend()
         do {
@@ -1007,6 +1025,334 @@ final class VotingRustBackendTests: XCTestCase {
         } catch {
             XCTFail("unexpected error: \(error)")
         }
+    }
+
+    func test_generateNoteWitnesses_afterOpen_forwardsNetworkIdAndPropagatesRustError() throws {
+        let backend = try makeOpenBackend()
+        defer { backend.close() }
+
+        XCTAssertThrowsError(
+            try backend.generateNoteWitnesses(
+                roundId: "round1",
+                bundleIndex: 0,
+                walletDbPath: "/tmp/nonexistent-wallet.sqlite",
+                notes: [],
+                networkId: 99
+            )
+        ) { error in
+            guard case VotingRustBackendError.rustError(let message) = error else {
+                XCTFail("expected .rustError, got \(error)")
+                return
+            }
+            XCTAssertTrue(message.contains("Invalid network type"), "unexpected message: \(message)")
+        }
+    }
+
+    func test_encryptShares_beforeOpen_throwsDatabaseNotOpen() {
+        let backend = VotingRustBackend()
+        XCTAssertThrowsError(try backend.encryptShares(roundId: "round1", shares: [1])) { error in
+            guard case VotingRustBackendError.databaseNotOpen = error else {
+                XCTFail("expected .databaseNotOpen, got \(error)")
+                return
+            }
+        }
+    }
+
+    func test_encryptShares_afterOpen_propagatesRustError() throws {
+        let backend = try makeOpenBackend()
+        defer { backend.close() }
+
+        XCTAssertThrowsError(try backend.encryptShares(roundId: "missing-round", shares: [1, 2])) { error in
+            guard case VotingRustBackendError.rustError(let message) = error else {
+                XCTFail("expected .rustError, got \(error)")
+                return
+            }
+            XCTAssertTrue(message.contains("encrypt_shares failed"), "unexpected message: \(message)")
+        }
+    }
+
+    func test_buildVoteCommitment_beforeOpen_throwsDatabaseNotOpen() async {
+        let backend = VotingRustBackend()
+
+        do {
+            _ = try await backend.buildVoteCommitment(
+                roundId: "round1",
+                bundleIndex: 0,
+                hotkeySeed: [UInt8](repeating: 1, count: 32),
+                networkId: 1,
+                proposalId: 0,
+                choice: 0,
+                numOptions: 2,
+                vanWitness: VotingVanWitness(
+                    authPath: [[UInt8](repeating: 1, count: 32)],
+                    position: 0,
+                    anchorHeight: 0
+                ),
+                singleShare: false
+            )
+            XCTFail("expected .databaseNotOpen")
+        } catch let error as VotingRustBackendError {
+            guard case .databaseNotOpen = error else {
+                XCTFail("expected .databaseNotOpen, got \(error)")
+                return
+            }
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
+    func test_buildVoteCommitment_afterOpen_rejectsShortSeedAndDoesNotReportProgress() async throws {
+        let backend = try makeOpenBackend()
+        defer { backend.close() }
+        let progressReported = expectation(description: "progress must not be reported before seed validation")
+        progressReported.isInverted = true
+
+        do {
+            _ = try await backend.buildVoteCommitment(
+                roundId: "round1",
+                bundleIndex: 0,
+                hotkeySeed: [UInt8](repeating: 1, count: 31),
+                networkId: 1,
+                proposalId: 0,
+                choice: 0,
+                numOptions: 2,
+                vanWitness: VotingVanWitness(
+                    authPath: [],
+                    position: 0,
+                    anchorHeight: 0
+                ),
+                singleShare: false,
+                progress: { _ in progressReported.fulfill() }
+            )
+            XCTFail("expected .rustError")
+        } catch let error as VotingRustBackendError {
+            guard case .rustError(let message) = error else {
+                XCTFail("expected .rustError, got \(error)")
+                return
+            }
+            XCTAssertTrue(message.contains("hotkey_seed must be at least"), "unexpected message: \(message)")
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+
+        await fulfillment(of: [progressReported], timeout: 0.1)
+    }
+
+    func test_buildSharePayloads_beforeOpen_throwsDatabaseNotOpen() {
+        let backend = VotingRustBackend()
+        XCTAssertThrowsError(
+            try backend.buildSharePayloads(
+                commitment: makeVoteCommitmentBundle(),
+                voteDecision: 0,
+                numOptions: 2,
+                voteCommitmentTreePosition: 0,
+                singleShare: false
+            )
+        ) { error in
+            guard case VotingRustBackendError.databaseNotOpen = error else {
+                XCTFail("expected .databaseNotOpen, got \(error)")
+                return
+            }
+        }
+    }
+
+    func test_buildSharePayloads_afterOpen_rejectsCommitmentWithoutEncryptedShares() throws {
+        let backend = try makeOpenBackend()
+        defer { backend.close() }
+
+        XCTAssertThrowsError(
+            try backend.buildSharePayloads(
+                commitment: makeVoteCommitmentBundle(encShares: []),
+                voteDecision: 0,
+                numOptions: 2,
+                voteCommitmentTreePosition: 0,
+                singleShare: false
+            )
+        ) { error in
+            guard case VotingRustBackendError.rustError(let message) = error else {
+                XCTFail("expected .rustError, got \(error)")
+                return
+            }
+            XCTAssertTrue(message.contains("enc_shares must not be empty"), "unexpected message: \(message)")
+        }
+    }
+
+    func test_voteSubmissionHelpers_afterOpen_buildPayloadsSignAndMarkSubmitted() throws {
+        let backend = try makeOpenBackend()
+        defer { backend.close() }
+        let commitment = makeVoteCommitmentBundle(proposalId: 7)
+
+        let payloads = try backend.buildSharePayloads(
+            commitment: commitment,
+            voteDecision: 1,
+            numOptions: 2,
+            voteCommitmentTreePosition: 42,
+            singleShare: false
+        )
+
+        XCTAssertEqual(payloads.count, commitment.encShares.count)
+        XCTAssertEqual(payloads[0].sharesHash, commitment.sharesHash)
+        XCTAssertEqual(payloads[0].proposalId, commitment.proposalId)
+        XCTAssertEqual(payloads[0].voteDecision, 1)
+        XCTAssertEqual(payloads[0].treePosition, 42)
+        XCTAssertEqual(payloads[0].encShare.shareIndex, commitment.encShares[0].shareIndex)
+        XCTAssertEqual(payloads[0].allEncShares.count, commitment.encShares.count)
+        XCTAssertEqual(payloads[0].shareComms, commitment.shareComms)
+        XCTAssertEqual(payloads[0].primaryBlind, commitment.shareBlinds[0])
+
+        let nullifier = try VotingRustBackend.computeShareNullifier(
+            voteCommitment: commitment.voteCommitment,
+            shareIndex: payloads[0].encShare.shareIndex,
+            primaryBlind: payloads[0].primaryBlind
+        )
+        XCTAssertEqual(nullifier.count, 64)
+
+        let signature = try VotingRustBackend.signCastVote(
+            hotkeySeed: [UInt8](repeating: 1, count: 32),
+            networkId: 1,
+            commitment: commitment
+        )
+        XCTAssertFalse(signature.voteAuthSig.isEmpty)
+
+        try createRoundWithBundle(backend, roundId: commitment.voteRoundId)
+        try insertVoteRow(
+            roundId: commitment.voteRoundId,
+            walletId: "wallet",
+            bundleIndex: 0,
+            proposalId: commitment.proposalId
+        )
+        XCTAssertNoThrow(
+            try backend.markVoteSubmitted(
+                roundId: commitment.voteRoundId,
+                bundleIndex: 0,
+                proposalId: commitment.proposalId
+            )
+        )
+    }
+
+    func test_markVoteSubmitted_beforeOpen_throwsDatabaseNotOpen() {
+        let backend = VotingRustBackend()
+        XCTAssertThrowsError(
+            try backend.markVoteSubmitted(roundId: "round1", bundleIndex: 0, proposalId: 0)
+        ) { error in
+            guard case VotingRustBackendError.databaseNotOpen = error else {
+                XCTFail("expected .databaseNotOpen, got \(error)")
+                return
+            }
+        }
+    }
+
+    func test_markVoteSubmitted_afterOpen_marksExistingVote() throws {
+        let backend = try makeOpenBackend()
+        defer { backend.close() }
+
+        try createRoundWithBundle(backend, roundId: roundTripRoundId)
+        try insertVoteRow(
+            roundId: roundTripRoundId,
+            walletId: "wallet",
+            bundleIndex: roundTripBundleIndex,
+            proposalId: roundTripProposalId
+        )
+        XCTAssertNoThrow(
+            try backend.markVoteSubmitted(
+                roundId: roundTripRoundId,
+                bundleIndex: roundTripBundleIndex,
+                proposalId: roundTripProposalId
+            )
+        )
+    }
+
+    func test_signCastVote_invalidCommitment_throwsRustError() {
+        XCTAssertThrowsError(
+            try VotingRustBackend.signCastVote(
+                hotkeySeed: [UInt8](repeating: 1, count: 32),
+                networkId: 1,
+                commitment: makeVoteCommitmentBundle(voteRoundId: "too-short")
+            )
+        ) { error in
+            guard case VotingRustBackendError.rustError = error else {
+                XCTFail("expected .rustError, got \(error)")
+                return
+            }
+        }
+    }
+
+    func test_signCastVote_rejectsShortSeed() {
+        XCTAssertThrowsError(
+            try VotingRustBackend.signCastVote(
+                hotkeySeed: [UInt8](repeating: 1, count: 31),
+                networkId: 1,
+                commitment: makeVoteCommitmentBundle()
+            )
+        ) { error in
+            guard case VotingRustBackendError.rustError(let message) = error else {
+                XCTFail("expected .rustError, got \(error)")
+                return
+            }
+            XCTAssertTrue(message.contains("hotkey_seed must be at least"), "unexpected message: \(message)")
+        }
+    }
+
+    func test_signCastVote_rejectsWrongSizedCanonicalFields() {
+        let short = [UInt8](repeating: 1, count: 31)
+
+        let cases: [(String, VotingVoteCommitmentBundle, String)] = [
+            (
+                "rVpkBytes",
+                makeVoteCommitmentBundle(rVpkBytes: short),
+                "r_vpk_bytes must be 32 bytes"
+            ),
+            (
+                "vanNullifier",
+                makeVoteCommitmentBundle(vanNullifier: short),
+                "van_nullifier must be 32 bytes"
+            ),
+            (
+                "voteAuthorityNoteNew",
+                makeVoteCommitmentBundle(voteAuthorityNoteNew: short),
+                "vote_authority_note_new must be 32 bytes"
+            ),
+            (
+                "voteCommitment",
+                makeVoteCommitmentBundle(voteCommitment: short),
+                "vote_commitment must be 32 bytes"
+            ),
+            (
+                "alphaV",
+                makeVoteCommitmentBundle(alphaV: short),
+                "alpha_v must be 32 bytes"
+            )
+        ]
+
+        for (label, commitment, expectedMessage) in cases {
+            XCTAssertThrowsError(
+                try VotingRustBackend.signCastVote(
+                    hotkeySeed: [UInt8](repeating: 1, count: 32),
+                    networkId: 1,
+                    commitment: commitment
+                ),
+                label
+            ) { error in
+                guard case VotingRustBackendError.rustError(let message) = error else {
+                    XCTFail("\(label): expected .rustError, got \(error)")
+                    return
+                }
+                XCTAssertTrue(
+                    message.contains(expectedMessage),
+                    "\(label): unexpected message: \(message)"
+                )
+            }
+        }
+    }
+
+    func test_signCastVote_validFixture_returnsSignature() throws {
+        let signature = try VotingRustBackend.signCastVote(
+            hotkeySeed: [UInt8](repeating: 1, count: 32),
+            networkId: 1,
+            commitment: makeVoteCommitmentBundle()
+        )
+
+        XCTAssertFalse(signature.voteAuthSig.isEmpty)
     }
 
     // MARK: - setWalletId
@@ -1210,6 +1556,46 @@ final class VotingRustBackendTests: XCTestCase {
                 userInfo: [NSLocalizedDescriptionKey: "\(message): \(details)"]
             )
         }
+    }
+
+    private func makeOpenBackend() throws -> VotingRustBackend {
+        let backend = VotingRustBackend()
+        try backend.open(path: makeTempDbPath())
+        try backend.setWalletId("wallet")
+        return backend
+    }
+
+    private func makeVoteCommitmentBundle(
+        voteRoundId: String = String(repeating: "a", count: 64),
+        vanNullifier: [UInt8] = [UInt8](repeating: 1, count: 32),
+        voteAuthorityNoteNew: [UInt8] = [UInt8](repeating: 2, count: 32),
+        voteCommitment: [UInt8] = [UInt8](repeating: 3, count: 32),
+        proposalId: UInt32 = 0,
+        encShares: [VotingWireEncryptedShare] = [
+            VotingWireEncryptedShare(
+                ciphertext1: [UInt8](repeating: 5, count: 32),
+                ciphertext2: [UInt8](repeating: 6, count: 32),
+                shareIndex: 0
+            )
+        ],
+        rVpkBytes: [UInt8] = [UInt8](repeating: 10, count: 32),
+        alphaV: [UInt8] = [UInt8](repeating: 11, count: 32)
+    ) -> VotingVoteCommitmentBundle {
+        VotingVoteCommitmentBundle(
+            vanNullifier: vanNullifier,
+            voteAuthorityNoteNew: voteAuthorityNoteNew,
+            voteCommitment: voteCommitment,
+            proposalId: proposalId,
+            proof: [4],
+            encShares: encShares,
+            anchorHeight: 1,
+            voteRoundId: voteRoundId,
+            sharesHash: [7],
+            shareBlinds: [[UInt8](repeating: 8, count: 32)],
+            shareComms: [[UInt8](repeating: 9, count: 32)],
+            rVpkBytes: rVpkBytes,
+            alphaV: alphaV
+        )
     }
 }
 
