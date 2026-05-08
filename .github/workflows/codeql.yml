@@ -11,11 +11,28 @@
 #
 name: "CodeQL Advanced"
 
+# CodeQL runs on merges to main and on a weekly schedule, not on every PR.
+#
+# Rationale:
+# - The Swift matrix entry requires `build-mode: manual` (CodeQL's Swift extractor
+#   hooks the compiler), so it has to run a full Rust FFI + Swift build on a
+#   macos-15 runner. On Cargo.lock-changing PRs this is a 30-50 min cold build,
+#   per push, with no concurrency cancellation.
+# - The build-integration signal that matters at PR time (does Rust still link
+#   with Swift? do offline tests pass?) is already covered by `swift.yml` on
+#   every PR. CodeQL Swift adds static-analysis findings, not build verification.
+# - Moving CodeQL to push-to-main + weekly cadence keeps the security signal
+#   while removing a major source of PR-time CI cost.
 on:
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  schedule:
+    # Weekly Monday 06:00 UTC: catches new query-pack rules and dependency
+    # drift even when nobody has pushed to main.
+    - cron: '0 6 * * 1'
+  # Manual trigger: re-run between scheduled scans, e.g. after a security-
+  # relevant dependency lands and waiting until the next Monday is too long.
+  workflow_dispatch: {}
 
 permissions:
   contents: read

@@ -23,10 +23,14 @@ pub unsafe extern "C" fn zcashlc_voting_compute_share_nullifier(
     share_index: u32,
 ) -> *mut c_char {
     let res = catch_panic(|| {
-        let vc = unsafe { std::slice::from_raw_parts(vote_commitment, 32) };
-        let blind = unsafe { std::slice::from_raw_parts(primary_blind, 32) };
+        let vc: [u8; 32] = unsafe { std::slice::from_raw_parts(vote_commitment, 32) }
+            .try_into()
+            .map_err(|_| anyhow!("vote_commitment must be exactly 32 bytes"))?;
+        let blind: [u8; 32] = unsafe { std::slice::from_raw_parts(primary_blind, 32) }
+            .try_into()
+            .map_err(|_| anyhow!("primary_blind must be exactly 32 bytes"))?;
 
-        let nullifier = voting::share_tracking::compute_share_nullifier(vc, share_index, blind)
+        let nullifier = voting::share_tracking::compute_share_nullifier(&vc, share_index, &blind)
             .map_err(|e| anyhow!("compute_share_nullifier failed: {}", e))?;
 
         // Fixed-width hex: one 64-char allocation instead of per-byte `format!` temporaries.
