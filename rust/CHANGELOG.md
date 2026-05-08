@@ -76,8 +76,6 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enabled the `client-tree-sync` feature on `zcash_voting`, required by the
   new tree-sync FFI symbols and by the `VoteTreeSync` field on
   `VotingDatabaseHandle`.
-- Bumped `zcash_voting` to `0.5.6`, including upstream voting submission
-  validation fixes and a test-fixture helper used by the Rust FFI tests.
 
 ## 2.4.6 - 2026-03-12
 
