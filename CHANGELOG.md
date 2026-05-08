@@ -72,7 +72,7 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `getDelegationSubmission(roundId:bundleIndex:senderSeed:networkId:accountIndex:)` → `zcashlc_voting_get_delegation_submission`
   - `getDelegationSubmission(roundId:bundleIndex:keystoneSig:sighash:)` → `zcashlc_voting_get_delegation_submission_with_keystone_sig`
   - `storeVanPosition(roundId:bundleIndex:position:)` → `zcashlc_voting_store_van_position`
-  - `buildAndProveDelegation(roundId:bundleIndex:treeState:roundName:progress:)` (`async`, runs on a detached `Task`) → `zcashlc_voting_build_and_prove_delegation` (with progress callback bridge)
+  - `buildAndProveDelegation(roundId:bundleIndex:notes:hotkeyRawAddress:pirEndpoints:expectedSnapshotHeight:networkId:pirResolver:progress:)` (`async`, resolves the PIR snapshot endpoint, then runs proving on a detached `Task`) → `zcashlc_voting_build_and_prove_delegation` (with progress callback bridge)
 - `Broadcaster` protocol — separates transaction creation from submission, enabling custom broadcast strategies (e.g. submitting to multiple lightwalletd servers in parallel).
   - `Broadcaster.createProposedTransactions(proposal:spendingKey:)` — creates transactions locally without broadcasting, returning `[ZcashTransaction.Overview]` with raw bytes.
   - `Broadcaster.createTransactionFromPCZT(pcztWithProofs:pcztWithSigs:)` — extracts and stores a transaction from PCZT data without submitting.

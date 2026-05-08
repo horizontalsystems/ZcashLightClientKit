@@ -1436,6 +1436,10 @@ extension VotingRustBackend {
     /// The closure must be thread-safe; it may be called concurrently with the
     /// returned `Task`'s actor and is bridged through a `@convention(c)`
     /// trampoline. The closure is retained for the duration of the call only.
+    ///
+    /// Do not call back into this `VotingRustBackend` from `progress`. Rust may
+    /// invoke the callback while the database-handle lock is held, so re-entering
+    /// this backend can deadlock.
     // swiftlint:disable:next function_parameter_count
     public func buildAndProveDelegation(
         roundId: String,
