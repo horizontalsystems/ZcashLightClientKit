@@ -480,7 +480,15 @@ pub unsafe extern "C" fn zcashlc_voting_precompute_delegation_pir(
 ///
 /// - `db` must be a valid, non-null `VotingDatabaseHandle` pointer.
 /// - `progress_callback` must be a valid function pointer, or null to skip progress.
-/// - `progress_context` is passed through to the callback unchanged.
+///   If provided, it must remain callable until this function returns. It must be
+///   thread-safe and reentrant; callers must not assume it runs on the main thread,
+///   because progress may be reported from proving worker threads.
+/// - `progress_context` is passed to `progress_callback` unchanged. If non-null,
+///   it must point to state that remains valid until this function returns. The
+///   callback must not store `progress_context` or use it after this function
+///   has returned.
+/// - The callback must not call back into this voting database handle or perform
+///   work that can deadlock or reenter the active proof operation.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zcashlc_voting_build_and_prove_delegation(
     db: *mut VotingDatabaseHandle,
