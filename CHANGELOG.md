@@ -20,6 +20,59 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Vote-tree sync: `syncVoteTree(roundId:nodeUrl:)`, `generateVanWitness(roundId:bundleIndex:anchorHeight:)`, and `resetTreeClient(roundId:)` over the corresponding `zcashlc_voting_sync_vote_tree` / `_generate_van_witness` / `_reset_tree_client` FFI.
   - The static `computeShareNullifier(voteCommitment:shareIndex:primaryBlind:)` over `zcashlc_voting_compute_share_nullifier`, with 32-byte input validation.
   - `VotingRustBackendError` cases `databaseAlreadyOpen` / `databaseNotOpen` for handle-state errors, alongside the existing `rustError` and `invalidData`.
+- Extends `VotingRustBackend` with additional FFI wrappers and their FFI mappings:
+
+  Foundation helpers (static)
+  - `warmProvingCaches()` → `zcashlc_voting_warm_proving_caches`
+  - `decomposeWeight(_:)` → `zcashlc_voting_decompose_weight`
+  - `generateDelegationInputs(senderSeed:hotkeySeed:networkId:accountIndex:)` → `zcashlc_voting_generate_delegation_inputs`
+  - `generateDelegationInputs(senderFvk:hotkeySeed:networkId:seedFingerprint:)` → `zcashlc_voting_generate_delegation_inputs_with_fvk`
+  - `extractPcztSighash(pczt:)` → `zcashlc_voting_extract_pczt_sighash`
+  - `extractSpendAuthSig(signedPczt:actionIndex:)` → `zcashlc_voting_extract_spend_auth_sig`
+  - `extractOrchardFvk(ufvk:networkId:)` → `zcashlc_voting_extract_orchard_fvk_from_ufvk`
+  - `extractNcRoot(treeState:)` → `zcashlc_voting_extract_nc_root`
+  - `verifyWitness(_:)` → `zcashlc_voting_verify_witness`
+  - `validatePirProof(_:)` → `zcashlc_voting_validate_pir_proof` (takes `VotingPirProof`)
+
+  Round lifecycle
+  - `initRound(roundId:snapshotHeight:eaPublicKey:ncRoot:nullifierImtRoot:sessionJson:)` → `zcashlc_voting_init_round`
+  - `getRoundState(roundId:)` → `zcashlc_voting_get_round_state` (frees `FfiRoundState` via `zcashlc_voting_free_round_state`)
+  - `listRounds()` → `zcashlc_voting_list_rounds` (frees `FfiRoundSummaries` via `zcashlc_voting_free_round_summaries`)
+  - `getVotes(roundId:)` → `zcashlc_voting_get_votes` (frees `FfiVoteRecords` via `zcashlc_voting_free_vote_records`)
+  - `clearRound(roundId:)` → `zcashlc_voting_clear_round`
+  - `deleteSkippedBundles(roundId:keepCount:)` → `zcashlc_voting_delete_skipped_bundles`
+
+  Wallet notes
+  - `getWalletNotes(accountUuidBytes:dataDbPath:snapshotHeight:networkId:)` → `zcashlc_voting_get_wallet_notes`
+
+  Recovery state
+  - `storeDelegationTxHash(roundId:bundleIndex:txHash:)` → `zcashlc_voting_store_delegation_tx_hash`
+  - `getDelegationTxHash(roundId:bundleIndex:)` → `zcashlc_voting_get_delegation_tx_hash`
+  - `storeVoteTxHash(roundId:bundleIndex:proposalId:txHash:)` → `zcashlc_voting_store_vote_tx_hash`
+  - `getVoteTxHash(roundId:bundleIndex:proposalId:)` → `zcashlc_voting_get_vote_tx_hash`
+  - `storeCommitmentBundle(roundId:bundleIndex:proposalId:bundleJson:voteCommitmentTreePosition:)` → `zcashlc_voting_store_commitment_bundle`
+  - `getCommitmentBundle(roundId:bundleIndex:proposalId:)` → `zcashlc_voting_get_commitment_bundle`
+  - `storeKeystoneSignature(roundId:bundleIndex:sig:sighash:randomizedKey:)` → `zcashlc_voting_store_keystone_signature`
+  - `getKeystoneSignatures(roundId:)` → `zcashlc_voting_get_keystone_signatures`
+  - `clearRecoveryState(roundId:)` → `zcashlc_voting_clear_recovery_state`
+
+  Share delegation tracking
+  - `recordShareDelegation(roundId:bundleIndex:proposalId:shareIndex:sentToURLs:nullifier:submitAt:)` → `zcashlc_voting_record_share_delegation`
+  - `getShareDelegations(roundId:)` → `zcashlc_voting_get_share_delegations`
+  - `getUnconfirmedDelegations(roundId:)` → `zcashlc_voting_get_unconfirmed_delegations`
+  - `markShareConfirmed(roundId:bundleIndex:proposalId:shareIndex:)` → `zcashlc_voting_mark_share_confirmed`
+  - `addSentServers(roundId:bundleIndex:proposalId:shareIndex:newURLs:)` → `zcashlc_voting_add_sent_servers`
+
+  Delegation workflow
+  - `generateHotkey(roundId:seed:)` → `zcashlc_voting_generate_hotkey` (frees `FfiVotingHotkey` via `zcashlc_voting_free_hotkey`)
+  - `setupBundles(roundId:notes:)` → `zcashlc_voting_setup_bundles` (frees `FfiBundleSetupResult` via `zcashlc_voting_free_bundle_setup_result`)
+  - `getBundleCount(roundId:)` → `zcashlc_voting_get_bundle_count`
+  - `buildPczt(_:)` → `zcashlc_voting_build_pczt` (takes `VotingBuildPcztParams`)
+  - `storeTreeState(roundId:treeState:)` → `zcashlc_voting_store_tree_state`
+  - `getDelegationSubmission(roundId:bundleIndex:senderSeed:networkId:accountIndex:)` → `zcashlc_voting_get_delegation_submission`
+  - `getDelegationSubmission(roundId:bundleIndex:keystoneSig:sighash:)` → `zcashlc_voting_get_delegation_submission_with_keystone_sig`
+  - `storeVanPosition(roundId:bundleIndex:position:)` → `zcashlc_voting_store_van_position`
+  - `buildAndProveDelegation(roundId:bundleIndex:treeState:roundName:progress:)` (`async`, runs on a detached `Task`) → `zcashlc_voting_build_and_prove_delegation` (with progress callback bridge)
 - `Broadcaster` protocol — separates transaction creation from submission, enabling custom broadcast strategies (e.g. submitting to multiple lightwalletd servers in parallel).
   - `Broadcaster.createProposedTransactions(proposal:spendingKey:)` — creates transactions locally without broadcasting, returning `[ZcashTransaction.Overview]` with raw bytes.
   - `Broadcaster.createTransactionFromPCZT(pcztWithProofs:pcztWithSigs:)` — extracts and stores a transaction from PCZT data without submitting.
