@@ -13,7 +13,7 @@ use zcash_voting::{self as voting, zkp1};
 use crate::{unwrap_exc_or, unwrap_exc_or_null};
 
 use super::db::VotingDatabaseHandle;
-use super::helpers::{bytes_from_ptr, json_to_boxed_slice, str_from_ptr};
+use super::helpers::{bytes_from_ptr, json_to_boxed_slice, open_wallet_db, str_from_ptr};
 use super::json::{JsonDelegationPirPrecomputeResult, JsonNoteInfo, JsonWitnessData};
 
 /// Validate that a cached lightwalletd `TreeState` is anchored to the voting
@@ -79,9 +79,9 @@ pub unsafe extern "C" fn zcashlc_voting_generate_note_witnesses(
     let res = catch_panic(|| {
         let handle =
             unsafe { db.as_ref() }.ok_or_else(|| anyhow!("VotingDatabaseHandle is null"))?;
-        let network = crate::parse_network(network_id)?;
         let round_id_str = unsafe { str_from_ptr(round_id, round_id_len) }?;
         let wallet_path_str = unsafe { str_from_ptr(wallet_db_path, wallet_db_path_len) }?;
+        let wallet_db = open_wallet_db(&wallet_path_str, network_id)?;
         let notes_bytes = unsafe { bytes_from_ptr(notes_json, notes_json_len) }?;
         let json_notes: Vec<JsonNoteInfo> = if notes_bytes.is_empty() {
             Vec::new()
@@ -116,22 +116,12 @@ pub unsafe extern "C" fn zcashlc_voting_generate_note_witnesses(
             anyhow!("empty orchard frontier — no orchard activity at snapshot height")
         })?;
 
-        // Open the wallet DB
-        let wallet_db = zcash_client_sqlite::WalletDb::for_path(
-            &wallet_path_str,
-            network,
-            zcash_client_sqlite::util::SystemClock,
-            rand::rngs::OsRng,
-        )
-        .map_err(|e| anyhow!("failed to open wallet DB for tree operations: {}", e))?;
-
         // Convert note positions to Merkle positions
         let positions: Vec<Position> = core_notes
             .iter()
             .map(|n| Position::from(n.position))
             .collect();
 
-        // Generate witnesses from wallet DB shard data + frontier
         // `BlockHeight` is u32-backed; `snapshot_height` is u64. A wallet that
         // somehow synced past u32::MAX blocks is impossible in protocol terms,
         // but reject it explicitly rather than silently truncating.
