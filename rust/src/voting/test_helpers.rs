@@ -23,11 +23,22 @@ pub(crate) fn insert_round_and_bundle(db: *mut VotingDatabaseHandle, round_id: &
     };
     handle.db.init_round(&params, None).expect("insert round");
 
-    let wallet_id = handle.db.wallet_id();
-    let conn = handle.db.conn();
-    conn.execute(
-        "INSERT INTO bundles (round_id, wallet_id, bundle_index) VALUES (?1, ?2, ?3)",
-        rusqlite::params![round_id, wallet_id, 0i64],
-    )
-    .expect("insert bundle");
+    let notes: Vec<zcash_voting::NoteInfo> = (0..5)
+        .map(|position| zcash_voting::NoteInfo {
+            commitment: vec![1u8; 32],
+            nullifier: vec![2u8; 32],
+            value: 13_000_000,
+            position,
+            diversifier: vec![0u8; 11],
+            rho: vec![3u8; 32],
+            rseed: vec![4u8; 32],
+            scope: 0,
+            ufvk_str: String::new(),
+        })
+        .collect();
+    let (count, _) = handle
+        .db
+        .setup_bundles(round_id, &notes)
+        .expect("setup bundle");
+    assert_eq!(count, 1);
 }
