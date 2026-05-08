@@ -344,7 +344,123 @@ mod tests {
     use super::*;
     use crate::ffi::zcashlc_free_boxed_slice;
     use crate::voting::db::zcashlc_voting_db_free;
+    use crate::voting::share_tracking::{
+        zcashlc_voting_get_share_delegations, zcashlc_voting_record_share_delegation,
+    };
     use crate::voting::test_helpers::{insert_round_and_bundle, open_memory_db};
+    use serde::de::DeserializeOwned;
+
+    fn decode_boxed_json<T: DeserializeOwned>(ptr: *mut crate::ffi::BoxedSlice) -> T {
+        assert!(!ptr.is_null());
+        let json = unsafe { (*ptr).as_slice() }.to_vec();
+        let value = serde_json::from_slice(&json).expect("decode boxed JSON");
+        unsafe { zcashlc_free_boxed_slice(ptr) };
+        value
+    }
+
+    fn insert_vote(db: *mut VotingDatabaseHandle, round_id: &str) {
+        let handle = unsafe { db.as_ref() }.expect("voting db handle");
+        let wallet_id = handle.db.wallet_id();
+        let conn = handle.db.conn();
+        zcash_voting::storage::queries::store_vote(
+            &conn,
+            round_id,
+            &wallet_id,
+            0,
+            0,
+            0,
+            &[0xaa; 32],
+        )
+        .expect("insert vote");
+    }
+
+    #[test]
+    fn delegation_tx_hash_round_trips() {
+        let db = open_memory_db();
+        let round_id = b"round";
+        insert_round_and_bundle(db, "round");
+        let tx_hash = b"delegation-tx";
+
+        let code = unsafe {
+            zcashlc_voting_store_delegation_tx_hash(
+                db,
+                round_id.as_ptr(),
+                round_id.len(),
+                0,
+                tx_hash.as_ptr(),
+                tx_hash.len(),
+            )
+        };
+        assert_eq!(code, 0);
+
+        let result = unsafe {
+            zcashlc_voting_get_delegation_tx_hash(db, round_id.as_ptr(), round_id.len(), 0)
+        };
+        let actual: Option<String> = decode_boxed_json(result);
+        assert_eq!(actual.as_deref(), Some("delegation-tx"));
+
+        unsafe { zcashlc_voting_db_free(db) };
+    }
+
+    #[test]
+    fn vote_tx_hash_round_trips() {
+        let db = open_memory_db();
+        let round_id = b"round";
+        insert_round_and_bundle(db, "round");
+        insert_vote(db, "round");
+        let tx_hash = b"vote-tx";
+
+        let code = unsafe {
+            zcashlc_voting_store_vote_tx_hash(
+                db,
+                round_id.as_ptr(),
+                round_id.len(),
+                0,
+                0,
+                tx_hash.as_ptr(),
+                tx_hash.len(),
+            )
+        };
+        assert_eq!(code, 0);
+
+        let result =
+            unsafe { zcashlc_voting_get_vote_tx_hash(db, round_id.as_ptr(), round_id.len(), 0, 0) };
+        let actual: Option<String> = decode_boxed_json(result);
+        assert_eq!(actual.as_deref(), Some("vote-tx"));
+
+        unsafe { zcashlc_voting_db_free(db) };
+    }
+
+    #[test]
+    fn commitment_bundle_round_trips() {
+        let db = open_memory_db();
+        let round_id = b"round";
+        insert_round_and_bundle(db, "round");
+        insert_vote(db, "round");
+        let bundle_json = br#"{"bundle":true}"#;
+
+        let code = unsafe {
+            zcashlc_voting_store_commitment_bundle(
+                db,
+                round_id.as_ptr(),
+                round_id.len(),
+                0,
+                0,
+                bundle_json.as_ptr(),
+                bundle_json.len(),
+                42,
+            )
+        };
+        assert_eq!(code, 0);
+
+        let result = unsafe {
+            zcashlc_voting_get_commitment_bundle(db, round_id.as_ptr(), round_id.len(), 0, 0)
+        };
+        let actual: Option<(String, u64)> = decode_boxed_json(result);
+        assert_eq!(actual, Some((r#"{"bundle":true}"#.to_string(), 42)));
+
+        unsafe { zcashlc_voting_db_free(db) };
+    }
 
     #[test]
     fn store_keystone_signature_round_trips_valid_signature() {
@@ -438,6 +554,136 @@ mod tests {
             };
             assert_eq!(code, -1);
         }
+
+        unsafe { zcashlc_voting_db_free(db) };
+    }
+
+    #[test]
+    fn clear_recovery_state_removes_stored_recovery_data() {
+        let db = open_memory_db();
+        let round_id = b"round";
+        insert_round_and_bundle(db, "round");
+        insert_vote(db, "round");
+
+        let delegation_tx = b"delegation-tx";
+        assert_eq!(
+            unsafe {
+                zcashlc_voting_store_delegation_tx_hash(
+                    db,
+                    round_id.as_ptr(),
+                    round_id.len(),
+                    0,
+                    delegation_tx.as_ptr(),
+                    delegation_tx.len(),
+                )
+            },
+            0
+        );
+
+        let vote_tx = b"vote-tx";
+        assert_eq!(
+            unsafe {
+                zcashlc_voting_store_vote_tx_hash(
+                    db,
+                    round_id.as_ptr(),
+                    round_id.len(),
+                    0,
+                    0,
+                    vote_tx.as_ptr(),
+                    vote_tx.len(),
+                )
+            },
+            0
+        );
+
+        let bundle_json = br#"{"bundle":true}"#;
+        assert_eq!(
+            unsafe {
+                zcashlc_voting_store_commitment_bundle(
+                    db,
+                    round_id.as_ptr(),
+                    round_id.len(),
+                    0,
+                    0,
+                    bundle_json.as_ptr(),
+                    bundle_json.len(),
+                    42,
+                )
+            },
+            0
+        );
+
+        let sig = [1u8; KEYSTONE_SIGNATURE_LEN];
+        let sighash = [2u8; PCZT_SIGHASH_LEN];
+        let rk = [3u8; RANDOMIZED_KEY_LEN];
+        assert_eq!(
+            unsafe {
+                zcashlc_voting_store_keystone_signature(
+                    db,
+                    round_id.as_ptr(),
+                    round_id.len(),
+                    0,
+                    sig.as_ptr(),
+                    sig.len(),
+                    sighash.as_ptr(),
+                    sighash.len(),
+                    rk.as_ptr(),
+                    rk.len(),
+                )
+            },
+            0
+        );
+
+        let urls_json = br#"["https://helper.example"]"#;
+        let nullifier_hex = [b'a'; 64];
+        assert_eq!(
+            unsafe {
+                zcashlc_voting_record_share_delegation(
+                    db,
+                    round_id.as_ptr(),
+                    round_id.len(),
+                    0,
+                    0,
+                    0,
+                    urls_json.as_ptr(),
+                    urls_json.len(),
+                    nullifier_hex.as_ptr(),
+                    nullifier_hex.len(),
+                    0,
+                )
+            },
+            0
+        );
+
+        assert_eq!(
+            unsafe { zcashlc_voting_clear_recovery_state(db, round_id.as_ptr(), round_id.len()) },
+            0
+        );
+
+        let delegation_tx: Option<String> = decode_boxed_json(unsafe {
+            zcashlc_voting_get_delegation_tx_hash(db, round_id.as_ptr(), round_id.len(), 0)
+        });
+        assert_eq!(delegation_tx, None);
+
+        let vote_tx: Option<String> = decode_boxed_json(unsafe {
+            zcashlc_voting_get_vote_tx_hash(db, round_id.as_ptr(), round_id.len(), 0, 0)
+        });
+        assert_eq!(vote_tx, None);
+
+        let commitment_bundle: Option<(String, u64)> = decode_boxed_json(unsafe {
+            zcashlc_voting_get_commitment_bundle(db, round_id.as_ptr(), round_id.len(), 0, 0)
+        });
+        assert_eq!(commitment_bundle, None);
+
+        let keystone_sigs: Vec<serde_json::Value> = decode_boxed_json(unsafe {
+            zcashlc_voting_get_keystone_signatures(db, round_id.as_ptr(), round_id.len())
+        });
+        assert!(keystone_sigs.is_empty());
+
+        let share_delegations: Vec<serde_json::Value> = decode_boxed_json(unsafe {
+            zcashlc_voting_get_share_delegations(db, round_id.as_ptr(), round_id.len())
+        });
+        assert!(share_delegations.is_empty());
 
         unsafe { zcashlc_voting_db_free(db) };
     }
