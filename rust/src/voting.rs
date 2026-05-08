@@ -5,6 +5,7 @@
 
 pub mod db;
 pub mod delegation;
+pub mod ffi_types;
 pub mod helpers;
 pub mod json;
 pub mod notes;
