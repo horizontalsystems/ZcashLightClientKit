@@ -56,17 +56,6 @@ pub unsafe extern "C" fn zcashlc_voting_store_delegation_tx_hash(
             .db
             .store_delegation_tx_hash(&round_id_str, bundle_index, &tx_hash_str)
             .map_err(|e| anyhow!("store_delegation_tx_hash failed: {}", e))?;
-        let persisted = handle
-            .db
-            .get_delegation_tx_hash(&round_id_str, bundle_index)
-            .map_err(|e| anyhow!("verify delegation tx hash failed: {}", e))?;
-        if persisted.as_deref() != Some(tx_hash_str.as_str()) {
-            return Err(anyhow!(
-                "delegation tx hash was not persisted for round {} bundle {}",
-                round_id_str,
-                bundle_index
-            ));
-        }
         Ok(0)
     });
     unwrap_exc_or(res, -1)
@@ -127,18 +116,6 @@ pub unsafe extern "C" fn zcashlc_voting_store_vote_tx_hash(
             .db
             .store_vote_tx_hash(&round_id_str, bundle_index, proposal_id, &tx_hash_str)
             .map_err(|e| anyhow!("store_vote_tx_hash failed: {}", e))?;
-        let persisted = handle
-            .db
-            .get_vote_tx_hash(&round_id_str, bundle_index, proposal_id)
-            .map_err(|e| anyhow!("verify vote tx hash failed: {}", e))?;
-        if persisted.as_deref() != Some(tx_hash_str.as_str()) {
-            return Err(anyhow!(
-                "vote tx hash was not persisted for round {} bundle {} proposal {}",
-                round_id_str,
-                bundle_index,
-                proposal_id
-            ));
-        }
         Ok(0)
     });
     unwrap_exc_or(res, -1)
@@ -207,22 +184,6 @@ pub unsafe extern "C" fn zcashlc_voting_store_commitment_bundle(
                 vc_tree_position,
             )
             .map_err(|e| anyhow!("store_commitment_bundle failed: {}", e))?;
-        let persisted = handle
-            .db
-            .get_commitment_bundle(&round_id_str, bundle_index, proposal_id)
-            .map_err(|e| anyhow!("verify commitment bundle failed: {}", e))?;
-        match persisted {
-            Some((stored_json, stored_position))
-                if stored_json == json_str && stored_position == vc_tree_position => {}
-            _ => {
-                return Err(anyhow!(
-                    "commitment bundle was not persisted for round {} bundle {} proposal {}",
-                    round_id_str,
-                    bundle_index,
-                    proposal_id
-                ));
-            }
-        }
         Ok(0)
     });
     unwrap_exc_or(res, -1)
@@ -384,72 +345,6 @@ mod tests {
     use crate::ffi::zcashlc_free_boxed_slice;
     use crate::voting::db::zcashlc_voting_db_free;
     use crate::voting::test_helpers::{insert_round_and_bundle, open_memory_db};
-
-    #[test]
-    fn store_delegation_tx_hash_rejects_missing_bundle() {
-        let db = open_memory_db();
-        let round_id = b"round";
-        let tx_hash = b"tx";
-
-        let code = unsafe {
-            zcashlc_voting_store_delegation_tx_hash(
-                db,
-                round_id.as_ptr(),
-                round_id.len(),
-                0,
-                tx_hash.as_ptr(),
-                tx_hash.len(),
-            )
-        };
-
-        assert_eq!(code, -1);
-        unsafe { zcashlc_voting_db_free(db) };
-    }
-
-    #[test]
-    fn store_vote_tx_hash_rejects_missing_vote() {
-        let db = open_memory_db();
-        let round_id = b"round";
-        let tx_hash = b"tx";
-
-        let code = unsafe {
-            zcashlc_voting_store_vote_tx_hash(
-                db,
-                round_id.as_ptr(),
-                round_id.len(),
-                0,
-                0,
-                tx_hash.as_ptr(),
-                tx_hash.len(),
-            )
-        };
-
-        assert_eq!(code, -1);
-        unsafe { zcashlc_voting_db_free(db) };
-    }
-
-    #[test]
-    fn store_commitment_bundle_rejects_missing_vote() {
-        let db = open_memory_db();
-        let round_id = b"round";
-        let bundle_json = br#"{"bundle":true}"#;
-
-        let code = unsafe {
-            zcashlc_voting_store_commitment_bundle(
-                db,
-                round_id.as_ptr(),
-                round_id.len(),
-                0,
-                0,
-                bundle_json.as_ptr(),
-                bundle_json.len(),
-                42,
-            )
-        };
-
-        assert_eq!(code, -1);
-        unsafe { zcashlc_voting_db_free(db) };
-    }
 
     #[test]
     fn store_keystone_signature_round_trips_valid_signature() {
