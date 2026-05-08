@@ -9,6 +9,7 @@ pub mod ffi_types;
 pub mod helpers;
 pub mod json;
 pub mod notes;
+pub mod progress;
 pub mod recovery;
 pub mod rounds;
 pub mod share_tracking;

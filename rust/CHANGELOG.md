@@ -51,6 +51,13 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `zcashlc_voting_clear_round`, `zcashlc_voting_delete_skipped_bundles`,
   recovery-state transaction/hash/signature helpers, and share-delegation
   tracking helpers for persisted voting round state.
+- `zcashlc_voting_generate_hotkey`, `zcashlc_voting_setup_bundles`,
+  `zcashlc_voting_get_bundle_count`, `zcashlc_voting_build_pczt`,
+  `zcashlc_voting_store_tree_state`,
+  `zcashlc_voting_build_and_prove_delegation`,
+  `zcashlc_voting_get_delegation_submission`,
+  `zcashlc_voting_get_delegation_submission_with_keystone_sig`, and
+  `zcashlc_voting_store_van_position` for the delegation workflow FFI.
 - `zcashlc_voting_get_wallet_notes`: Load unspent Orchard notes for a wallet
   account at a snapshot height and return them as JSON-encoded
   `Vec<NoteInfo>` in a `*mut FfiBoxedSlice`. `account_uuid` must be a non-null

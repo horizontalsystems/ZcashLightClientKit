@@ -13,8 +13,17 @@ use zcash_voting::{self as voting, zkp1};
 use crate::{unwrap_exc_or, unwrap_exc_or_null};
 
 use super::db::VotingDatabaseHandle;
-use super::helpers::{bytes_from_ptr, json_to_boxed_slice, open_wallet_db, str_from_ptr};
-use super::json::{JsonDelegationPirPrecomputeResult, JsonNoteInfo, JsonWitnessData};
+use super::ffi_types::{FfiBundleSetupResult, FfiVotingHotkey};
+use super::helpers::{
+    bytes_from_ptr, json_to_boxed_slice, open_wallet_db, str_from_ptr, voting_hotkey_to_ffi,
+};
+use super::json::{
+    JsonDelegationPirPrecomputeResult, JsonDelegationProofResult, JsonDelegationSubmission,
+    JsonNoteInfo, JsonVotingPczt, JsonWitnessData,
+};
+use super::progress::ProgressBridge;
+
+const SEED_FINGERPRINT_LEN: usize = 32;
 
 /// Validate that a cached lightwalletd `TreeState` is anchored to the voting
 /// round it will be used for.
@@ -48,6 +57,212 @@ fn validate_cached_tree_state_for_round(
 // =============================================================================
 // VotingDatabase methods — Delegation proof
 // =============================================================================
+
+/// Generate a voting hotkey for a round.
+///
+/// Returns a pointer to `FfiVotingHotkey` on success, or null on error.
+/// Call `zcashlc_voting_free_hotkey` to free the returned pointer.
+///
+/// # Safety
+///
+/// - `db` must be a valid, non-null `VotingDatabaseHandle` pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zcashlc_voting_generate_hotkey(
+    db: *mut VotingDatabaseHandle,
+    round_id: *const u8,
+    round_id_len: usize,
+    seed: *const u8,
+    seed_len: usize,
+) -> *mut FfiVotingHotkey {
+    let db = AssertUnwindSafe(db);
+    let res = catch_panic(|| {
+        let handle =
+            unsafe { db.as_ref() }.ok_or_else(|| anyhow!("VotingDatabaseHandle is null"))?;
+        let round_id_str = unsafe { str_from_ptr(round_id, round_id_len) }?;
+        let seed_bytes = unsafe { bytes_from_ptr(seed, seed_len) }?;
+
+        let hotkey = handle
+            .db
+            .generate_hotkey(&round_id_str, seed_bytes)
+            .map_err(|e| anyhow!("generate_hotkey failed: {}", e))?;
+
+        Ok(Box::into_raw(Box::new(voting_hotkey_to_ffi(hotkey)?)))
+    });
+    unwrap_exc_or_null(res)
+}
+
+/// Set up note bundles for a voting round.
+///
+/// `notes_json` is a JSON-encoded `Vec<NoteInfo>`.
+///
+/// Returns a pointer to `FfiBundleSetupResult` on success, or null on error.
+/// Call `zcashlc_voting_free_bundle_setup_result` to free the returned pointer.
+///
+/// # Safety
+///
+/// - `db` must be a valid, non-null `VotingDatabaseHandle` pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zcashlc_voting_setup_bundles(
+    db: *mut VotingDatabaseHandle,
+    round_id: *const u8,
+    round_id_len: usize,
+    notes_json: *const u8,
+    notes_json_len: usize,
+) -> *mut FfiBundleSetupResult {
+    let db = AssertUnwindSafe(db);
+    let res = catch_panic(|| {
+        let handle =
+            unsafe { db.as_ref() }.ok_or_else(|| anyhow!("VotingDatabaseHandle is null"))?;
+        let round_id_str = unsafe { str_from_ptr(round_id, round_id_len) }?;
+        let notes_bytes = unsafe { bytes_from_ptr(notes_json, notes_json_len) }?;
+        let json_notes: Vec<JsonNoteInfo> = serde_json::from_slice(notes_bytes)?;
+        let core_notes: Vec<voting::NoteInfo> = json_notes.into_iter().map(Into::into).collect();
+
+        let (count, weight) = handle
+            .db
+            .setup_bundles(&round_id_str, &core_notes)
+            .map_err(|e| anyhow!("setup_bundles failed: {}", e))?;
+
+        Ok(Box::into_raw(Box::new(FfiBundleSetupResult {
+            bundle_count: count,
+            eligible_weight: weight,
+        })))
+    });
+    unwrap_exc_or_null(res)
+}
+
+/// Get the number of bundles for a round.
+///
+/// Returns the bundle count on success, or -1 on error.
+///
+/// # Safety
+///
+/// - `db` must be a valid, non-null `VotingDatabaseHandle` pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zcashlc_voting_get_bundle_count(
+    db: *mut VotingDatabaseHandle,
+    round_id: *const u8,
+    round_id_len: usize,
+) -> i64 {
+    let db = AssertUnwindSafe(db);
+    let res = catch_panic(|| {
+        let handle =
+            unsafe { db.as_ref() }.ok_or_else(|| anyhow!("VotingDatabaseHandle is null"))?;
+        let round_id_str = unsafe { str_from_ptr(round_id, round_id_len) }?;
+
+        let count = handle
+            .db
+            .get_bundle_count(&round_id_str)
+            .map_err(|e| anyhow!("get_bundle_count failed: {}", e))?;
+        Ok(count as i64)
+    });
+    unwrap_exc_or(res, -1)
+}
+
+/// Build a voting PCZT for a bundle.
+///
+/// `notes_json` is a JSON-encoded `Vec<NoteInfo>`.
+///
+/// Returns JSON-encoded `VotingPczt` as `*mut FfiBoxedSlice`, or null on error.
+///
+/// # Safety
+///
+/// - `db` must be a valid, non-null `VotingDatabaseHandle` pointer.
+/// - All pointer/length pairs must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zcashlc_voting_build_pczt(
+    db: *mut VotingDatabaseHandle,
+    round_id: *const u8,
+    round_id_len: usize,
+    bundle_index: u32,
+    notes_json: *const u8,
+    notes_json_len: usize,
+    fvk_bytes: *const u8,
+    fvk_bytes_len: usize,
+    hotkey_raw_address: *const u8,
+    hotkey_raw_address_len: usize,
+    consensus_branch_id: u32,
+    coin_type: u32,
+    seed_fingerprint: *const u8,
+    seed_fingerprint_len: usize,
+    account_index: u32,
+    round_name: *const u8,
+    round_name_len: usize,
+    address_index: u32,
+) -> *mut crate::ffi::BoxedSlice {
+    let db = AssertUnwindSafe(db);
+    let res = catch_panic(|| {
+        let handle =
+            unsafe { db.as_ref() }.ok_or_else(|| anyhow!("VotingDatabaseHandle is null"))?;
+        let round_id_str = unsafe { str_from_ptr(round_id, round_id_len) }?;
+        let notes_bytes = unsafe { bytes_from_ptr(notes_json, notes_json_len) }?;
+        let json_notes: Vec<JsonNoteInfo> = serde_json::from_slice(notes_bytes)?;
+        let core_notes: Vec<voting::NoteInfo> = json_notes.into_iter().map(Into::into).collect();
+        let fvk = unsafe { bytes_from_ptr(fvk_bytes, fvk_bytes_len) }?;
+        let hotkey_addr = unsafe { bytes_from_ptr(hotkey_raw_address, hotkey_raw_address_len) }?;
+        let seed_fp_bytes = unsafe { bytes_from_ptr(seed_fingerprint, seed_fingerprint_len) }?;
+        let seed_fp_32: [u8; SEED_FINGERPRINT_LEN] = seed_fp_bytes.try_into().map_err(|_| {
+            anyhow!(
+                "seed_fingerprint must be {} bytes, got {}",
+                SEED_FINGERPRINT_LEN,
+                seed_fp_bytes.len()
+            )
+        })?;
+        let round_name_str = unsafe { str_from_ptr(round_name, round_name_len) }?;
+
+        let pczt = handle
+            .db
+            .build_governance_pczt(
+                &round_id_str,
+                bundle_index,
+                &core_notes,
+                fvk,
+                hotkey_addr,
+                consensus_branch_id,
+                coin_type,
+                &seed_fp_32,
+                account_index,
+                &round_name_str,
+                address_index,
+            )
+            .map_err(|e| anyhow!("build_voting_pczt failed: {}", e))?;
+
+        let json_pczt: JsonVotingPczt = pczt.into();
+        json_to_boxed_slice(&json_pczt)
+    });
+    unwrap_exc_or_null(res)
+}
+
+/// Store a tree state for witness generation.
+///
+/// Returns 0 on success, -1 on error.
+///
+/// # Safety
+///
+/// - `db` must be a valid, non-null `VotingDatabaseHandle` pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zcashlc_voting_store_tree_state(
+    db: *mut VotingDatabaseHandle,
+    round_id: *const u8,
+    round_id_len: usize,
+    tree_state_bytes: *const u8,
+    tree_state_bytes_len: usize,
+) -> i32 {
+    let db = AssertUnwindSafe(db);
+    let res = catch_panic(|| {
+        let handle =
+            unsafe { db.as_ref() }.ok_or_else(|| anyhow!("VotingDatabaseHandle is null"))?;
+        let round_id_str = unsafe { str_from_ptr(round_id, round_id_len) }?;
+        let ts_bytes = unsafe { bytes_from_ptr(tree_state_bytes, tree_state_bytes_len) }?;
+
+        handle
+            .db
+            .store_tree_state(&round_id_str, ts_bytes)
+            .map_err(|e| anyhow!("store_tree_state failed: {}", e))?;
+        Ok(0)
+    });
+    unwrap_exc_or(res, -1)
+}
 
 /// Generate Merkle inclusion witnesses for the notes in a bundle and cache
 /// them in the voting DB.
@@ -257,6 +472,181 @@ pub unsafe extern "C" fn zcashlc_voting_precompute_delegation_pir(
     unwrap_exc_or_null(res)
 }
 
+/// Build and prove the real delegation ZKP. Long-running.
+///
+/// Returns JSON-encoded `DelegationProofResult` as `*mut FfiBoxedSlice`, or null on error.
+///
+/// # Safety
+///
+/// - `db` must be a valid, non-null `VotingDatabaseHandle` pointer.
+/// - `progress_callback` must be a valid function pointer, or null to skip progress.
+/// - `progress_context` is passed through to the callback unchanged.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zcashlc_voting_build_and_prove_delegation(
+    db: *mut VotingDatabaseHandle,
+    round_id: *const u8,
+    round_id_len: usize,
+    bundle_index: u32,
+    notes_json: *const u8,
+    notes_json_len: usize,
+    hotkey_raw_address: *const u8,
+    hotkey_raw_address_len: usize,
+    pir_server_url: *const u8,
+    pir_server_url_len: usize,
+    network_id: u32,
+    progress_callback: Option<unsafe extern "C" fn(f64, *mut std::ffi::c_void)>,
+    progress_context: *mut std::ffi::c_void,
+) -> *mut crate::ffi::BoxedSlice {
+    let db = AssertUnwindSafe(db);
+    let progress_context = AssertUnwindSafe(progress_context);
+    let res = catch_panic(|| {
+        let handle =
+            unsafe { db.as_ref() }.ok_or_else(|| anyhow!("VotingDatabaseHandle is null"))?;
+        crate::parse_network(network_id)?;
+        let round_id_str = unsafe { str_from_ptr(round_id, round_id_len) }?;
+        let notes_bytes = unsafe { bytes_from_ptr(notes_json, notes_json_len) }?;
+        let json_notes: Vec<JsonNoteInfo> = serde_json::from_slice(notes_bytes)?;
+        let core_notes: Vec<voting::NoteInfo> = json_notes.into_iter().map(Into::into).collect();
+        let hotkey_addr = unsafe { bytes_from_ptr(hotkey_raw_address, hotkey_raw_address_len) }?;
+        let pir_url = unsafe { str_from_ptr(pir_server_url, pir_server_url_len) }?;
+        let pir_client = connect_pir_client(&pir_url)?;
+
+        let reporter: Box<dyn voting::ProofProgressReporter> = match progress_callback {
+            Some(cb) => Box::new(ProgressBridge {
+                callback: cb,
+                context: *progress_context,
+            }),
+            None => Box::new(voting::NoopProgressReporter),
+        };
+
+        let result = handle
+            .db
+            .build_and_prove_delegation(
+                &round_id_str,
+                bundle_index,
+                &core_notes,
+                hotkey_addr,
+                &pir_client,
+                network_id,
+                reporter.as_ref(),
+            )
+            .map_err(|e| anyhow!("build_and_prove_delegation failed: {}", e))?;
+
+        let json_result: JsonDelegationProofResult = result.into();
+        json_to_boxed_slice(&json_result)
+    });
+    unwrap_exc_or_null(res)
+}
+
+/// Get the delegation submission payload using a seed-derived signing key.
+///
+/// Returns JSON-encoded `DelegationSubmission` as `*mut FfiBoxedSlice`, or null on error.
+///
+/// # Safety
+///
+/// - `db` must be a valid, non-null `VotingDatabaseHandle` pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zcashlc_voting_get_delegation_submission(
+    db: *mut VotingDatabaseHandle,
+    round_id: *const u8,
+    round_id_len: usize,
+    bundle_index: u32,
+    sender_seed: *const u8,
+    sender_seed_len: usize,
+    network_id: u32,
+    account_index: u32,
+) -> *mut crate::ffi::BoxedSlice {
+    let db = AssertUnwindSafe(db);
+    let res = catch_panic(|| {
+        let handle =
+            unsafe { db.as_ref() }.ok_or_else(|| anyhow!("VotingDatabaseHandle is null"))?;
+        crate::parse_network(network_id)?;
+        let round_id_str = unsafe { str_from_ptr(round_id, round_id_len) }?;
+        let seed = unsafe { bytes_from_ptr(sender_seed, sender_seed_len) }?;
+
+        let submission = handle
+            .db
+            .get_delegation_submission(&round_id_str, bundle_index, seed, network_id, account_index)
+            .map_err(|e| anyhow!("get_delegation_submission failed: {}", e))?;
+
+        let json_sub: JsonDelegationSubmission = submission.into();
+        json_to_boxed_slice(&json_sub)
+    });
+    unwrap_exc_or_null(res)
+}
+
+/// Get the delegation submission payload using a Keystone-provided signature.
+///
+/// Returns JSON-encoded `DelegationSubmission` as `*mut FfiBoxedSlice`, or null on error.
+///
+/// # Safety
+///
+/// - `db` must be a valid, non-null `VotingDatabaseHandle` pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zcashlc_voting_get_delegation_submission_with_keystone_sig(
+    db: *mut VotingDatabaseHandle,
+    round_id: *const u8,
+    round_id_len: usize,
+    bundle_index: u32,
+    sig: *const u8,
+    sig_len: usize,
+    sighash: *const u8,
+    sighash_len: usize,
+) -> *mut crate::ffi::BoxedSlice {
+    let db = AssertUnwindSafe(db);
+    let res = catch_panic(|| {
+        let handle =
+            unsafe { db.as_ref() }.ok_or_else(|| anyhow!("VotingDatabaseHandle is null"))?;
+        let round_id_str = unsafe { str_from_ptr(round_id, round_id_len) }?;
+        let sig_bytes = unsafe { bytes_from_ptr(sig, sig_len) }?;
+        let sighash_bytes = unsafe { bytes_from_ptr(sighash, sighash_len) }?;
+
+        let submission = handle
+            .db
+            .get_delegation_submission_with_keystone_sig(
+                &round_id_str,
+                bundle_index,
+                sig_bytes,
+                sighash_bytes,
+            )
+            .map_err(|e| anyhow!("get_delegation_submission_with_keystone_sig failed: {}", e))?;
+
+        let json_sub: JsonDelegationSubmission = submission.into();
+        json_to_boxed_slice(&json_sub)
+    });
+    unwrap_exc_or_null(res)
+}
+
+/// Store the VAN leaf position after delegation transaction confirmation.
+///
+/// Returns 0 on success, -1 on error.
+///
+/// # Safety
+///
+/// - `db` must be a valid, non-null `VotingDatabaseHandle` pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zcashlc_voting_store_van_position(
+    db: *mut VotingDatabaseHandle,
+    round_id: *const u8,
+    round_id_len: usize,
+    bundle_index: u32,
+    position: u32,
+) -> i32 {
+    let db = AssertUnwindSafe(db);
+    let res = catch_panic(|| {
+        let handle =
+            unsafe { db.as_ref() }.ok_or_else(|| anyhow!("VotingDatabaseHandle is null"))?;
+        let round_id_str = unsafe { str_from_ptr(round_id, round_id_len) }?;
+
+        handle
+            .db
+            .store_van_position(&round_id_str, bundle_index, position)
+            .map_err(|e| anyhow!("store_van_position failed: {}", e))?;
+        Ok(0)
+    });
+    unwrap_exc_or(res, -1)
+}
+
 /// Depth of the IMT non-membership tree: number of authentication path
 /// siblings in a PIR-fetched proof. Matches `zcash_voting::ImtProofData::path`
 /// and `voting_circuits::delegation::imt::IMT_DEPTH` (29). Kept local because
@@ -366,6 +756,9 @@ mod tests {
     use crate::voting::db::{
         zcashlc_voting_db_free, zcashlc_voting_db_open, zcashlc_voting_set_wallet_id,
     };
+    use crate::voting::ffi_types::{
+        zcashlc_voting_free_bundle_setup_result, zcashlc_voting_free_hotkey,
+    };
 
     // Golden proof generated from zcash_voting's test-only TestImt helper:
     // https://github.com/valargroup/zcash_voting/blob/zcash_voting-v0.5.3/zcash_voting/src/zkp1.rs#L573-L708
@@ -461,6 +854,25 @@ mod tests {
         });
 
         db
+    }
+
+    fn init_test_round(db: *mut VotingDatabaseHandle) {
+        let handle = unsafe { db.as_ref() }.expect("db handle");
+        handle
+            .db
+            .init_round(&round_params(100, vec![7; 32]), None)
+            .expect("insert round");
+    }
+
+    fn insert_test_bundle(db: *mut VotingDatabaseHandle, bundle_index: u32) {
+        let handle = unsafe { db.as_ref() }.expect("db handle");
+        let wallet_id = handle.db.wallet_id();
+        let conn = handle.db.conn();
+        conn.execute(
+            "INSERT INTO bundles (round_id, wallet_id, bundle_index) VALUES (?1, ?2, ?3)",
+            rusqlite::params![TEST_ROUND_ID, wallet_id, i64::from(bundle_index)],
+        )
+        .expect("insert bundle");
     }
 
     fn merkle_hash(tag: u64) -> MerkleHashOrchard {
@@ -654,10 +1066,7 @@ mod tests {
             assert_eq!(witness.note_commitment, note_leaf.to_bytes().to_vec());
             assert_eq!(witness.position, u64::from(*position));
             assert_eq!(witness.root, expected_root);
-            assert_eq!(
-                witness.auth_path.len(),
-                orchard::NOTE_COMMITMENT_TREE_DEPTH as usize
-            );
+            assert_eq!(witness.auth_path.len(), orchard::NOTE_COMMITMENT_TREE_DEPTH);
 
             let path = incrementalmerkletree::MerklePath::<
                 MerkleHashOrchard,
@@ -695,6 +1104,299 @@ mod tests {
             assert_eq!(cached.root, returned.root);
             assert_eq!(cached.auth_path, returned.auth_path);
         }
+    }
+
+    #[test]
+    fn delegation_workflow_ffi_rejects_null_db() {
+        let round = TEST_ROUND_ID.as_bytes();
+        let json = b"[]";
+        let bytes = [0u8; 32];
+
+        assert!(
+            unsafe {
+                zcashlc_voting_generate_hotkey(
+                    std::ptr::null_mut(),
+                    round.as_ptr(),
+                    round.len(),
+                    bytes.as_ptr(),
+                    bytes.len(),
+                )
+            }
+            .is_null()
+        );
+        assert!(
+            unsafe {
+                zcashlc_voting_setup_bundles(
+                    std::ptr::null_mut(),
+                    round.as_ptr(),
+                    round.len(),
+                    json.as_ptr(),
+                    json.len(),
+                )
+            }
+            .is_null()
+        );
+        assert_eq!(
+            unsafe {
+                zcashlc_voting_get_bundle_count(std::ptr::null_mut(), round.as_ptr(), round.len())
+            },
+            -1
+        );
+        assert!(
+            unsafe {
+                zcashlc_voting_build_pczt(
+                    std::ptr::null_mut(),
+                    round.as_ptr(),
+                    round.len(),
+                    0,
+                    json.as_ptr(),
+                    json.len(),
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    0,
+                    0,
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    0,
+                    round.as_ptr(),
+                    round.len(),
+                    0,
+                )
+            }
+            .is_null()
+        );
+        assert_eq!(
+            unsafe {
+                zcashlc_voting_store_tree_state(
+                    std::ptr::null_mut(),
+                    round.as_ptr(),
+                    round.len(),
+                    bytes.as_ptr(),
+                    bytes.len(),
+                )
+            },
+            -1
+        );
+        assert!(
+            unsafe {
+                zcashlc_voting_build_and_prove_delegation(
+                    std::ptr::null_mut(),
+                    round.as_ptr(),
+                    round.len(),
+                    0,
+                    json.as_ptr(),
+                    json.len(),
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    round.as_ptr(),
+                    round.len(),
+                    crate::NETWORK_ID_TESTNET,
+                    None,
+                    std::ptr::null_mut(),
+                )
+            }
+            .is_null()
+        );
+        assert!(
+            unsafe {
+                zcashlc_voting_get_delegation_submission(
+                    std::ptr::null_mut(),
+                    round.as_ptr(),
+                    round.len(),
+                    0,
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    crate::NETWORK_ID_TESTNET,
+                    0,
+                )
+            }
+            .is_null()
+        );
+        assert!(
+            unsafe {
+                zcashlc_voting_get_delegation_submission_with_keystone_sig(
+                    std::ptr::null_mut(),
+                    round.as_ptr(),
+                    round.len(),
+                    0,
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    bytes.as_ptr(),
+                    bytes.len(),
+                )
+            }
+            .is_null()
+        );
+        assert_eq!(
+            unsafe {
+                zcashlc_voting_store_van_position(
+                    std::ptr::null_mut(),
+                    round.as_ptr(),
+                    round.len(),
+                    0,
+                    0,
+                )
+            },
+            -1
+        );
+    }
+
+    #[test]
+    fn generate_hotkey_returns_freeable_ffi_value() {
+        let db = open_memory_voting_db();
+        let seed = [7u8; 32];
+        let round = TEST_ROUND_ID.as_bytes();
+
+        let hotkey = unsafe {
+            zcashlc_voting_generate_hotkey(
+                db,
+                round.as_ptr(),
+                round.len(),
+                seed.as_ptr(),
+                seed.len(),
+            )
+        };
+
+        assert!(!hotkey.is_null());
+        let hotkey_ref = unsafe { hotkey.as_ref() }.expect("hotkey");
+        assert_eq!(hotkey_ref.secret_key_len, 32);
+        assert_eq!(hotkey_ref.public_key_len, 32);
+        assert!(!hotkey_ref.secret_key.is_null());
+        assert!(!hotkey_ref.public_key.is_null());
+        assert!(!hotkey_ref.address.is_null());
+
+        unsafe {
+            zcashlc_voting_free_hotkey(hotkey);
+            zcashlc_voting_db_free(db);
+        }
+    }
+
+    #[test]
+    fn generate_hotkey_rejects_short_seed() {
+        let db = open_memory_voting_db();
+        let seed = [7u8; 31];
+        let round = TEST_ROUND_ID.as_bytes();
+
+        let hotkey = unsafe {
+            zcashlc_voting_generate_hotkey(
+                db,
+                round.as_ptr(),
+                round.len(),
+                seed.as_ptr(),
+                seed.len(),
+            )
+        };
+
+        assert!(hotkey.is_null());
+        unsafe { zcashlc_voting_db_free(db) };
+    }
+
+    #[test]
+    fn setup_bundles_and_count_return_freeable_ffi_value() {
+        let db = open_memory_voting_db();
+        init_test_round(db);
+        let round = TEST_ROUND_ID.as_bytes();
+        let notes_json = b"[]";
+
+        let result = unsafe {
+            zcashlc_voting_setup_bundles(
+                db,
+                round.as_ptr(),
+                round.len(),
+                notes_json.as_ptr(),
+                notes_json.len(),
+            )
+        };
+
+        assert!(!result.is_null());
+        let result_ref = unsafe { result.as_ref() }.expect("bundle setup result");
+        assert_eq!(result_ref.bundle_count, 0);
+        assert_eq!(result_ref.eligible_weight, 0);
+        assert_eq!(
+            unsafe { zcashlc_voting_get_bundle_count(db, round.as_ptr(), round.len()) },
+            0
+        );
+
+        unsafe {
+            zcashlc_voting_free_bundle_setup_result(result);
+            zcashlc_voting_db_free(db);
+        }
+    }
+
+    #[test]
+    fn store_tree_state_and_van_position_accept_existing_round_bundle() {
+        let db = open_memory_voting_db();
+        init_test_round(db);
+        insert_test_bundle(db, 0);
+        let round = TEST_ROUND_ID.as_bytes();
+        let tree_state = [1u8, 2, 3];
+
+        assert_eq!(
+            unsafe {
+                zcashlc_voting_store_tree_state(
+                    db,
+                    round.as_ptr(),
+                    round.len(),
+                    tree_state.as_ptr(),
+                    tree_state.len(),
+                )
+            },
+            0
+        );
+        assert_eq!(
+            unsafe { zcashlc_voting_store_van_position(db, round.as_ptr(), round.len(), 0, 42) },
+            0
+        );
+
+        unsafe { zcashlc_voting_db_free(db) };
+    }
+
+    #[test]
+    fn proof_and_submission_calls_reject_invalid_network_id_before_remote_work() {
+        let db = open_memory_voting_db();
+        let round = TEST_ROUND_ID.as_bytes();
+        let notes_json = b"[]";
+        let bytes = [0u8; 32];
+
+        assert!(
+            unsafe {
+                zcashlc_voting_build_and_prove_delegation(
+                    db,
+                    round.as_ptr(),
+                    round.len(),
+                    0,
+                    notes_json.as_ptr(),
+                    notes_json.len(),
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    b"https://example.com/".as_ptr(),
+                    20,
+                    99,
+                    None,
+                    std::ptr::null_mut(),
+                )
+            }
+            .is_null()
+        );
+        assert!(
+            unsafe {
+                zcashlc_voting_get_delegation_submission(
+                    db,
+                    round.as_ptr(),
+                    round.len(),
+                    0,
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    99,
+                    0,
+                )
+            }
+            .is_null()
+        );
+
+        unsafe { zcashlc_voting_db_free(db) };
     }
 
     #[test]
