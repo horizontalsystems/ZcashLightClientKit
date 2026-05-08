@@ -139,6 +139,12 @@ class LightWalletGRPCService: LightWalletService {
         ClientConnection.insecure(group: NIOTSEventLoopGroup(loopCount: 1, defaultQoS: .default))
         
         let channel = connectionBuilder
+            .withKeepalive(
+                ClientConnectionKeepalive(
+                    interval: .seconds(15),
+                    timeout: .seconds(10)
+                )
+            )
             .withConnectivityStateDelegate(connectionManager, executingOn: queue)
             .connect(host: host, port: port)
 
