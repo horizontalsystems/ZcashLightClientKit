@@ -157,6 +157,14 @@ pub unsafe extern "C" fn zcashlc_voting_generate_note_witnesses(
                 )
             })?;
 
+        if merkle_paths.len() != core_notes.len() {
+            return Err(anyhow!(
+                "generated {} Merkle paths for {} notes",
+                merkle_paths.len(),
+                core_notes.len()
+            ));
+        }
+
         // Convert MerklePaths to WitnessData
         let root_bytes = frontier_root_bytes.to_vec();
         let witnesses: Vec<voting::WitnessData> = merkle_paths
@@ -493,6 +501,212 @@ mod tests {
         unsafe { zcashlc_free_boxed_slice(ptr) };
     }
 
+    fn seed_wallet_orchard_tree(
+        wallet_path: &std::path::Path,
+        snapshot_height: u64,
+        later_height: u32,
+        marked_positions: &[Position],
+    ) -> (
+        Frontier<MerkleHashOrchard, { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 }>,
+        Vec<MerkleHashOrchard>,
+    ) {
+        let max_position = marked_positions
+            .iter()
+            .map(|position| u64::from(*position))
+            .max()
+            .unwrap_or(2);
+        let leaf_count = max_position + 3;
+        let leaves = (1u64..=leaf_count).map(merkle_hash).collect::<Vec<_>>();
+        let mut frontier_tree: Frontier<
+            MerkleHashOrchard,
+            { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 },
+        > = Frontier::empty();
+
+        let mut wallet_db = WalletDb::for_path(
+            wallet_path,
+            Network::TestNetwork,
+            SystemClock,
+            rand::rngs::OsRng,
+        )
+        .expect("open wallet db");
+        WalletMigrator::new()
+            .init_or_migrate(&mut wallet_db)
+            .expect("initialize wallet db");
+
+        wallet_db
+            .with_orchard_tree_mut(|tree| {
+                for (i, leaf) in leaves.iter().enumerate() {
+                    let retention = if marked_positions
+                        .iter()
+                        .any(|position| u64::from(*position) == i as u64)
+                    {
+                        Retention::Marked
+                    } else {
+                        Retention::Ephemeral
+                    };
+                    tree.append(*leaf, retention)?;
+                    frontier_tree.append(*leaf);
+                }
+
+                tree.checkpoint(BlockHeight::from_u32(snapshot_height as u32))?;
+
+                // Advance the wallet past the snapshot so witness generation
+                // has to use the cached historical frontier.
+                for tag in (leaf_count + 1)..=(leaf_count + 5) {
+                    tree.append(merkle_hash(tag), Retention::Ephemeral)?;
+                }
+                tree.checkpoint(BlockHeight::from_u32(later_height))?;
+
+                Ok::<(), zcash_client_sqlite::error::SqliteClientError>(())
+            })
+            .expect("seed wallet Orchard tree");
+
+        (frontier_tree, leaves)
+    }
+
+    fn store_round_bundle_and_tree_state(
+        db: *mut VotingDatabaseHandle,
+        snapshot_height: u64,
+        bundle_index: u32,
+        bundle_positions: &[Position],
+        nc_root: Vec<u8>,
+        tree_state: &TreeState,
+    ) {
+        let tree_state_bytes = tree_state.encode_to_vec();
+        let handle = unsafe { db.as_ref() }.expect("voting db handle");
+        let conn = handle.db.conn();
+        let params = round_params(snapshot_height, nc_root);
+        let note_positions = bundle_positions
+            .iter()
+            .map(|position| u64::from(*position))
+            .collect::<Vec<_>>();
+
+        queries::insert_round(&conn, TEST_WALLET_ID, &params, None).expect("insert round");
+        queries::insert_bundle(
+            &conn,
+            TEST_ROUND_ID,
+            TEST_WALLET_ID,
+            bundle_index,
+            &note_positions,
+        )
+        .expect("insert bundle");
+        queries::store_tree_state(
+            &conn,
+            TEST_ROUND_ID,
+            TEST_WALLET_ID,
+            snapshot_height,
+            &tree_state_bytes,
+        )
+        .expect("store tree state");
+    }
+
+    fn note_json_for(position: Position, commitment: MerkleHashOrchard) -> JsonNoteInfo {
+        JsonNoteInfo {
+            commitment: commitment.to_bytes().to_vec(),
+            nullifier: vec![0; 32],
+            value: 50_000,
+            position: u64::from(position),
+            diversifier: vec![0; 11],
+            rho: vec![0; 32],
+            rseed: vec![0; 32],
+            scope: 0,
+            ufvk_str: "ufvk-test-fixture".to_string(),
+        }
+    }
+
+    fn notes_json_for_positions(leaves: &[MerkleHashOrchard], positions: &[Position]) -> Vec<u8> {
+        let notes = positions
+            .iter()
+            .map(|position| note_json_for(*position, leaves[u64::from(*position) as usize]))
+            .collect::<Vec<_>>();
+        serde_json::to_vec(&notes).expect("serialize notes")
+    }
+
+    fn call_generate_note_witnesses(
+        db: *mut VotingDatabaseHandle,
+        bundle_index: u32,
+        wallet_path_bytes: &[u8],
+        notes_json_ptr: *const u8,
+        notes_json_len: usize,
+    ) -> *mut crate::ffi::BoxedSlice {
+        unsafe {
+            zcashlc_voting_generate_note_witnesses(
+                db,
+                TEST_ROUND_ID.as_ptr(),
+                TEST_ROUND_ID.len(),
+                bundle_index,
+                wallet_path_bytes.as_ptr(),
+                wallet_path_bytes.len(),
+                notes_json_ptr,
+                notes_json_len,
+                NETWORK_ID_TESTNET,
+            )
+        }
+    }
+
+    fn decode_witnesses(ptr: *mut crate::ffi::BoxedSlice) -> Vec<JsonWitnessData> {
+        let witnesses =
+            serde_json::from_slice(unsafe { (*ptr).as_slice() }).expect("decode witnesses");
+        free(ptr);
+        witnesses
+    }
+
+    fn assert_witnesses_match_positions(
+        witnesses: &[JsonWitnessData],
+        leaves: &[MerkleHashOrchard],
+        positions: &[Position],
+        expected_root: &[u8],
+    ) {
+        assert_eq!(witnesses.len(), positions.len());
+
+        for (witness, position) in witnesses.iter().zip(positions.iter()) {
+            let note_leaf = leaves[u64::from(*position) as usize];
+            assert_eq!(witness.note_commitment, note_leaf.to_bytes().to_vec());
+            assert_eq!(witness.position, u64::from(*position));
+            assert_eq!(witness.root, expected_root);
+            assert_eq!(
+                witness.auth_path.len(),
+                orchard::NOTE_COMMITMENT_TREE_DEPTH as usize
+            );
+
+            let path = incrementalmerkletree::MerklePath::<
+                MerkleHashOrchard,
+                { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 },
+            >::from_parts(
+                witness
+                    .auth_path
+                    .iter()
+                    .map(|bytes| {
+                        let arr: [u8; 32] = bytes.as_slice().try_into().expect("path element size");
+                        MerkleHashOrchard::from_bytes(&arr).expect("canonical path element")
+                    })
+                    .collect(),
+                *position,
+            )
+            .expect("rebuild returned Merkle path");
+            assert_eq!(path.root(note_leaf).to_bytes().to_vec(), expected_root);
+        }
+    }
+
+    fn assert_cached_witnesses_match(
+        db: *mut VotingDatabaseHandle,
+        bundle_index: u32,
+        witnesses: &[JsonWitnessData],
+    ) {
+        let handle = unsafe { db.as_ref() }.expect("voting db handle");
+        let conn = handle.db.conn();
+        let cached = queries::load_witnesses(&conn, TEST_ROUND_ID, TEST_WALLET_ID, bundle_index)
+            .expect("load cached witnesses");
+
+        assert_eq!(cached.len(), witnesses.len());
+        for (cached, returned) in cached.iter().zip(witnesses.iter()) {
+            assert_eq!(cached.note_commitment, returned.note_commitment);
+            assert_eq!(cached.position, returned.position);
+            assert_eq!(cached.root, returned.root);
+            assert_eq!(cached.auth_path, returned.auth_path);
+        }
+    }
+
     #[test]
     fn cached_tree_state_validation_accepts_matching_round() {
         let root = [7; 32];
@@ -702,18 +916,174 @@ mod tests {
 
         let wallet_path = temp_sqlite_path("generate_witnesses_success_wallet");
         let wallet_path_bytes = wallet_path.to_string_lossy().as_bytes().to_vec();
+        let note_positions = vec![Position::from(2)];
 
-        let mut frontier_tree: Frontier<
-            MerkleHashOrchard,
-            { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 },
-        > = Frontier::empty();
-        let note_position = Position::from(2);
-        let leaves = (1u64..=5).map(merkle_hash).collect::<Vec<_>>();
-        let note_leaf = leaves[u64::from(note_position) as usize];
+        let (frontier_tree, leaves) =
+            seed_wallet_orchard_tree(&wallet_path, SNAPSHOT_HEIGHT, LATER_HEIGHT, &note_positions);
+        let expected_root = frontier_tree.root().to_bytes().to_vec();
+        let tree_state = tree_state_from_frontier(SNAPSHOT_HEIGHT, &frontier_tree);
 
-        // Seed both the wallet ShardTree and a standalone frontier with the
-        // same synthetic Orchard commitments. The wallet DB is what the FFI
-        // reads. The frontier becomes the cached lightwalletd TreeState.
+        let db = open_memory_voting_db();
+        store_round_bundle_and_tree_state(
+            db,
+            SNAPSHOT_HEIGHT,
+            BUNDLE_INDEX,
+            &note_positions,
+            expected_root.clone(),
+            &tree_state,
+        );
+
+        let notes_json = notes_json_for_positions(&leaves, &note_positions);
+        let result = call_generate_note_witnesses(
+            db,
+            BUNDLE_INDEX,
+            &wallet_path_bytes,
+            notes_json.as_ptr(),
+            notes_json.len(),
+        );
+        assert!(!result.is_null(), "witness generation succeeds");
+
+        let returned = decode_witnesses(result);
+        assert_witnesses_match_positions(&returned, &leaves, &note_positions, &expected_root);
+        assert_cached_witnesses_match(db, BUNDLE_INDEX, &returned);
+
+        unsafe { zcashlc_voting_db_free(db) };
+        let _ = std::fs::remove_file(&wallet_path);
+    }
+
+    #[test]
+    fn generate_note_witnesses_returns_and_caches_multiple_valid_witnesses() {
+        const SNAPSHOT_HEIGHT: u64 = 100;
+        const LATER_HEIGHT: u32 = 200;
+        const BUNDLE_INDEX: u32 = 8;
+
+        let wallet_path = temp_sqlite_path("generate_witnesses_multi_wallet");
+        let wallet_path_bytes = wallet_path.to_string_lossy().as_bytes().to_vec();
+        let note_positions = vec![Position::from(1), Position::from(2), Position::from(4)];
+
+        let (frontier_tree, leaves) =
+            seed_wallet_orchard_tree(&wallet_path, SNAPSHOT_HEIGHT, LATER_HEIGHT, &note_positions);
+        let expected_root = frontier_tree.root().to_bytes().to_vec();
+        let tree_state = tree_state_from_frontier(SNAPSHOT_HEIGHT, &frontier_tree);
+
+        let db = open_memory_voting_db();
+        store_round_bundle_and_tree_state(
+            db,
+            SNAPSHOT_HEIGHT,
+            BUNDLE_INDEX,
+            &note_positions,
+            expected_root.clone(),
+            &tree_state,
+        );
+
+        let notes_json = notes_json_for_positions(&leaves, &note_positions);
+        let result = call_generate_note_witnesses(
+            db,
+            BUNDLE_INDEX,
+            &wallet_path_bytes,
+            notes_json.as_ptr(),
+            notes_json.len(),
+        );
+        assert!(!result.is_null(), "multi-note witness generation succeeds");
+
+        let returned = decode_witnesses(result);
+        assert_witnesses_match_positions(&returned, &leaves, &note_positions, &expected_root);
+        assert_cached_witnesses_match(db, BUNDLE_INDEX, &returned);
+
+        unsafe { zcashlc_voting_db_free(db) };
+        let _ = std::fs::remove_file(&wallet_path);
+    }
+
+    #[test]
+    fn generate_note_witnesses_rejects_stale_tree_state_height_through_ffi() {
+        const SNAPSHOT_HEIGHT: u64 = 100;
+        const LATER_HEIGHT: u32 = 200;
+        const BUNDLE_INDEX: u32 = 9;
+
+        let wallet_path = temp_sqlite_path("generate_witnesses_stale_height_wallet");
+        let wallet_path_bytes = wallet_path.to_string_lossy().as_bytes().to_vec();
+        let note_positions = vec![Position::from(2)];
+
+        let (frontier_tree, leaves) =
+            seed_wallet_orchard_tree(&wallet_path, SNAPSHOT_HEIGHT, LATER_HEIGHT, &note_positions);
+        let expected_root = frontier_tree.root().to_bytes().to_vec();
+        let stale_tree_state = tree_state_from_frontier(SNAPSHOT_HEIGHT - 1, &frontier_tree);
+
+        let db = open_memory_voting_db();
+        store_round_bundle_and_tree_state(
+            db,
+            SNAPSHOT_HEIGHT,
+            BUNDLE_INDEX,
+            &note_positions,
+            expected_root,
+            &stale_tree_state,
+        );
+
+        let notes_json = notes_json_for_positions(&leaves, &note_positions);
+        let result = call_generate_note_witnesses(
+            db,
+            BUNDLE_INDEX,
+            &wallet_path_bytes,
+            notes_json.as_ptr(),
+            notes_json.len(),
+        );
+
+        assert!(result.is_null());
+        assert_cached_witnesses_match(db, BUNDLE_INDEX, &[]);
+
+        unsafe { zcashlc_voting_db_free(db) };
+        let _ = std::fs::remove_file(&wallet_path);
+    }
+
+    #[test]
+    fn generate_note_witnesses_rejects_stale_tree_state_root_through_ffi() {
+        const SNAPSHOT_HEIGHT: u64 = 100;
+        const LATER_HEIGHT: u32 = 200;
+        const BUNDLE_INDEX: u32 = 10;
+
+        let wallet_path = temp_sqlite_path("generate_witnesses_stale_root_wallet");
+        let wallet_path_bytes = wallet_path.to_string_lossy().as_bytes().to_vec();
+        let note_positions = vec![Position::from(2)];
+
+        let (frontier_tree, leaves) =
+            seed_wallet_orchard_tree(&wallet_path, SNAPSHOT_HEIGHT, LATER_HEIGHT, &note_positions);
+        let mut mismatched_root = frontier_tree.root().to_bytes().to_vec();
+        mismatched_root[0] ^= 1;
+        let tree_state = tree_state_from_frontier(SNAPSHOT_HEIGHT, &frontier_tree);
+
+        let db = open_memory_voting_db();
+        store_round_bundle_and_tree_state(
+            db,
+            SNAPSHOT_HEIGHT,
+            BUNDLE_INDEX,
+            &note_positions,
+            mismatched_root,
+            &tree_state,
+        );
+
+        let notes_json = notes_json_for_positions(&leaves, &note_positions);
+        let result = call_generate_note_witnesses(
+            db,
+            BUNDLE_INDEX,
+            &wallet_path_bytes,
+            notes_json.as_ptr(),
+            notes_json.len(),
+        );
+
+        assert!(result.is_null());
+        assert_cached_witnesses_match(db, BUNDLE_INDEX, &[]);
+
+        unsafe { zcashlc_voting_db_free(db) };
+        let _ = std::fs::remove_file(&wallet_path);
+    }
+
+    #[test]
+    fn generate_note_witnesses_rejects_empty_orchard_frontier() {
+        const SNAPSHOT_HEIGHT: u64 = 100;
+        const BUNDLE_INDEX: u32 = 11;
+
+        let wallet_path = temp_sqlite_path("generate_witnesses_empty_frontier_wallet");
+        let wallet_path_bytes = wallet_path.to_string_lossy().as_bytes().to_vec();
         {
             let mut wallet_db = WalletDb::for_path(
                 &wallet_path,
@@ -725,140 +1095,75 @@ mod tests {
             WalletMigrator::new()
                 .init_or_migrate(&mut wallet_db)
                 .expect("initialize wallet db");
-
-            wallet_db
-                .with_orchard_tree_mut(|tree| {
-                    for (i, leaf) in leaves.iter().enumerate() {
-                        let retention = if i == u64::from(note_position) as usize {
-                            Retention::Marked
-                        } else {
-                            Retention::Ephemeral
-                        };
-                        tree.append(*leaf, retention)?;
-                        frontier_tree.append(*leaf);
-                    }
-
-                    // Mark the target note before checkpointing so the wallet
-                    // can later produce a historical witness for this position.
-                    tree.checkpoint(BlockHeight::from_u32(SNAPSHOT_HEIGHT as u32))?;
-
-                    // Advance the wallet past the snapshot to prove witness
-                    // generation uses the cached historical frontier, not the
-                    // current tree tip.
-                    for tag in 6u64..=10 {
-                        tree.append(merkle_hash(tag), Retention::Ephemeral)?;
-                    }
-                    tree.checkpoint(BlockHeight::from_u32(LATER_HEIGHT))?;
-
-                    Ok::<(), zcash_client_sqlite::error::SqliteClientError>(())
-                })
-                .expect("seed wallet Orchard tree");
         }
 
-        let expected_root = frontier_tree.root().to_bytes().to_vec();
-        let tree_state = tree_state_from_frontier(SNAPSHOT_HEIGHT, &frontier_tree);
-        let tree_state_bytes = tree_state.encode_to_vec();
-
-        let db = open_memory_voting_db();
-
-        // The FFI validates that the cached TreeState is anchored exactly to
-        // the round snapshot height and note commitment root.
-        {
-            let handle = unsafe { db.as_ref() }.expect("voting db handle");
-            let conn = handle.db.conn();
-            let params = round_params(SNAPSHOT_HEIGHT, expected_root.clone());
-            queries::insert_round(&conn, TEST_WALLET_ID, &params, None).expect("insert round");
-            queries::insert_bundle(
-                &conn,
-                TEST_ROUND_ID,
-                TEST_WALLET_ID,
-                BUNDLE_INDEX,
-                &[u64::from(note_position)],
-            )
-            .expect("insert bundle");
-            queries::store_tree_state(
-                &conn,
-                TEST_ROUND_ID,
-                TEST_WALLET_ID,
-                SNAPSHOT_HEIGHT,
-                &tree_state_bytes,
-            )
-            .expect("store tree state");
-        }
-
-        let notes = vec![JsonNoteInfo {
-            commitment: note_leaf.to_bytes().to_vec(),
-            nullifier: vec![0; 32],
-            value: 50_000,
-            position: u64::from(note_position),
-            diversifier: vec![0; 11],
-            rho: vec![0; 32],
-            rseed: vec![0; 32],
-            scope: 0,
-            ufvk_str: "ufvk-test-fixture".to_string(),
-        }];
-        let notes_json = serde_json::to_vec(&notes).expect("serialize notes");
-
-        let result = unsafe {
-            zcashlc_voting_generate_note_witnesses(
-                db,
-                TEST_ROUND_ID.as_ptr(),
-                TEST_ROUND_ID.len(),
-                BUNDLE_INDEX,
-                wallet_path_bytes.as_ptr(),
-                wallet_path_bytes.len(),
-                notes_json.as_ptr(),
-                notes_json.len(),
-                NETWORK_ID_TESTNET,
-            )
-        };
-        assert!(!result.is_null(), "witness generation succeeds");
-
-        let returned: Vec<JsonWitnessData> =
-            serde_json::from_slice(unsafe { (*result).as_slice() }).expect("decode witnesses");
-        free(result);
-
-        assert_eq!(returned.len(), 1);
-        assert_eq!(returned[0].note_commitment, note_leaf.to_bytes().to_vec());
-        assert_eq!(returned[0].position, u64::from(note_position));
-        assert_eq!(returned[0].root, expected_root);
-        assert_eq!(
-            returned[0].auth_path.len(),
-            orchard::NOTE_COMMITMENT_TREE_DEPTH as usize
-        );
-
-        // Rebuild the Merkle path from the FFI JSON and verify it anchors the
-        // note commitment to the snapshot root.
-        let path = incrementalmerkletree::MerklePath::<
+        let empty_frontier: Frontier<
             MerkleHashOrchard,
             { orchard::NOTE_COMMITMENT_TREE_DEPTH as u8 },
-        >::from_parts(
-            returned[0]
-                .auth_path
-                .iter()
-                .map(|bytes| {
-                    let arr: [u8; 32] = bytes.as_slice().try_into().expect("path element size");
-                    MerkleHashOrchard::from_bytes(&arr).expect("canonical path element")
-                })
-                .collect(),
-            note_position,
-        )
-        .expect("rebuild returned Merkle path");
-        assert_eq!(path.root(note_leaf).to_bytes().to_vec(), expected_root);
+        > = Frontier::empty();
+        let expected_root = empty_frontier.root().to_bytes().to_vec();
+        let tree_state = tree_state_from_frontier(SNAPSHOT_HEIGHT, &empty_frontier);
+        let note_positions = vec![Position::from(0)];
 
-        // The call should cache the same witness data it returns to the caller.
-        {
-            let handle = unsafe { db.as_ref() }.expect("voting db handle");
-            let conn = handle.db.conn();
-            let cached =
-                queries::load_witnesses(&conn, TEST_ROUND_ID, TEST_WALLET_ID, BUNDLE_INDEX)
-                    .expect("load cached witnesses");
-            assert_eq!(cached.len(), 1);
-            assert_eq!(cached[0].note_commitment, returned[0].note_commitment);
-            assert_eq!(cached[0].position, returned[0].position);
-            assert_eq!(cached[0].root, returned[0].root);
-            assert_eq!(cached[0].auth_path, returned[0].auth_path);
-        }
+        let db = open_memory_voting_db();
+        store_round_bundle_and_tree_state(
+            db,
+            SNAPSHOT_HEIGHT,
+            BUNDLE_INDEX,
+            &note_positions,
+            expected_root,
+            &tree_state,
+        );
+
+        let notes = vec![note_json_for(Position::from(0), merkle_hash(1))];
+        let notes_json = serde_json::to_vec(&notes).expect("serialize notes");
+        let result = call_generate_note_witnesses(
+            db,
+            BUNDLE_INDEX,
+            &wallet_path_bytes,
+            notes_json.as_ptr(),
+            notes_json.len(),
+        );
+
+        assert!(result.is_null());
+        assert_cached_witnesses_match(db, BUNDLE_INDEX, &[]);
+
+        unsafe { zcashlc_voting_db_free(db) };
+        let _ = std::fs::remove_file(&wallet_path);
+    }
+
+    #[test]
+    fn generate_note_witnesses_accepts_zero_len_notes_json() {
+        const SNAPSHOT_HEIGHT: u64 = 100;
+        const LATER_HEIGHT: u32 = 200;
+        const BUNDLE_INDEX: u32 = 12;
+
+        let wallet_path = temp_sqlite_path("generate_witnesses_empty_notes_wallet");
+        let wallet_path_bytes = wallet_path.to_string_lossy().as_bytes().to_vec();
+        let note_positions = Vec::new();
+
+        let (frontier_tree, _leaves) =
+            seed_wallet_orchard_tree(&wallet_path, SNAPSHOT_HEIGHT, LATER_HEIGHT, &note_positions);
+        let expected_root = frontier_tree.root().to_bytes().to_vec();
+        let tree_state = tree_state_from_frontier(SNAPSHOT_HEIGHT, &frontier_tree);
+
+        let db = open_memory_voting_db();
+        store_round_bundle_and_tree_state(
+            db,
+            SNAPSHOT_HEIGHT,
+            BUNDLE_INDEX,
+            &note_positions,
+            expected_root,
+            &tree_state,
+        );
+
+        let result =
+            call_generate_note_witnesses(db, BUNDLE_INDEX, &wallet_path_bytes, std::ptr::null(), 0);
+        assert!(!result.is_null(), "empty notes list succeeds");
+
+        let returned = decode_witnesses(result);
+        assert!(returned.is_empty());
+        assert_cached_witnesses_match(db, BUNDLE_INDEX, &returned);
 
         unsafe { zcashlc_voting_db_free(db) };
         let _ = std::fs::remove_file(&wallet_path);
