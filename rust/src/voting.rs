@@ -9,6 +9,10 @@ pub mod ffi_types;
 pub mod helpers;
 pub mod json;
 pub mod notes;
+pub mod recovery;
+pub mod rounds;
 pub mod share_tracking;
+#[cfg(test)]
+pub(crate) mod test_helpers;
 pub mod tree;
 pub mod util;
