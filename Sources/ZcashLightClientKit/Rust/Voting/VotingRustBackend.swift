@@ -1044,18 +1044,7 @@ extension VotingRustBackend {
         let urlsJson = try JSONEncoder().encode(sentToURLs)
         let urlsBytes = [UInt8](urlsJson)
 
-        do {
-            try recordShareDelegation(
-                roundIdBytes: roundIdBytes,
-                bundleIndex: bundleIndex,
-                proposalId: proposalId,
-                shareIndex: shareIndex,
-                urlsBytes: urlsBytes,
-                nullifierArgument: nullifier,
-                submitAt: submitAt
-            )
-        } catch VotingRustBackendError.rustError(let message) where message.contains("invalid utf-8") {
-            try recordShareDelegation(
+      try recordShareDelegation(
                 roundIdBytes: roundIdBytes,
                 bundleIndex: bundleIndex,
                 proposalId: proposalId,
@@ -1064,7 +1053,6 @@ extension VotingRustBackend {
                 nullifierArgument: Self.hexBytes(for: nullifier),
                 submitAt: submitAt
             )
-        }
     }
 
     private func recordShareDelegation(
