@@ -767,6 +767,12 @@ extension VotingRustBackend {
                 )
             }
         }
+
+        guard try getDelegationTxHash(roundId: roundId, bundleIndex: bundleIndex) == txHash else {
+            throw VotingRustBackendError.rustError(
+                "delegation tx hash was not persisted for round \(roundId) bundle \(bundleIndex)"
+            )
+        }
     }
 
     /// Load a previously-stored delegation transaction hash, if any.
@@ -1037,10 +1043,43 @@ extension VotingRustBackend {
         let roundIdBytes = [UInt8](roundId.utf8)
         let urlsJson = try JSONEncoder().encode(sentToURLs)
         let urlsBytes = [UInt8](urlsJson)
+
+        do {
+            try recordShareDelegation(
+                roundIdBytes: roundIdBytes,
+                bundleIndex: bundleIndex,
+                proposalId: proposalId,
+                shareIndex: shareIndex,
+                urlsBytes: urlsBytes,
+                nullifierArgument: nullifier,
+                submitAt: submitAt
+            )
+        } catch VotingRustBackendError.rustError(let message) where message.contains("invalid utf-8") {
+            try recordShareDelegation(
+                roundIdBytes: roundIdBytes,
+                bundleIndex: bundleIndex,
+                proposalId: proposalId,
+                shareIndex: shareIndex,
+                urlsBytes: urlsBytes,
+                nullifierArgument: [UInt8](Self.hexString(for: nullifier).utf8),
+                submitAt: submitAt
+            )
+        }
+    }
+
+    private func recordShareDelegation(
+        roundIdBytes: [UInt8],
+        bundleIndex: UInt32,
+        proposalId: UInt32,
+        shareIndex: UInt32,
+        urlsBytes: [UInt8],
+        nullifierArgument: [UInt8],
+        submitAt: UInt64
+    ) throws {
         try withHandle { dbh in
             let result = roundIdBytes.withUnsafeBufferPointer { ridBuf in
                 urlsBytes.withUnsafeBufferPointer { urlsBuf in
-                    nullifier.withUnsafeBufferPointer { nfBuf in
+                    nullifierArgument.withUnsafeBufferPointer { nfBuf in
                         zcashlc_voting_record_share_delegation(
                             dbh,
                             ridBuf.baseAddress,
@@ -1601,6 +1640,10 @@ private extension VotingRustBackend {
         }
 
         return phase
+    }
+
+    static func hexString(for bytes: [UInt8]) -> String {
+        bytes.map { String(format: "%02x", $0) }.joined()
     }
 
     /// Decode required C strings from Rust, treating null as an invariant violation.
