@@ -3,6 +3,7 @@
 //! Implementation is split into submodules for navigation. Exported FFI functions
 //! keep their stable C symbols with `#[unsafe(no_mangle)]`.
 
+mod constants;
 pub mod db;
 pub mod delegation;
 pub mod ffi_types;
