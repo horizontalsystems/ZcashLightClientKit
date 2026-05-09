@@ -773,7 +773,7 @@ extension VotingRustBackend {
     public func getDelegationTxHash(
         roundId: String,
         bundleIndex: UInt32
-    ) throws -> VotingTxHashLookup {
+    ) throws -> String? {
         let roundIdBytes = [UInt8](roundId.utf8)
         let ptr: UnsafeMutablePointer<FfiBoxedSlice> = try withHandle { dbh in
             let ptr: UnsafeMutablePointer<FfiBoxedSlice>? = roundIdBytes.withUnsafeBufferPointer { buf in
@@ -792,8 +792,7 @@ extension VotingRustBackend {
             return ptr
         }
         defer { zcashlc_free_boxed_slice(ptr) }
-        let stored: String? = try decodeJSON(from: ptr)
-        return stored.map { .present($0) } ?? .notFound
+        return try decodeJSON(from: ptr)
     }
 
     /// Persist the on-chain transaction hash for a submitted vote.
@@ -832,7 +831,7 @@ extension VotingRustBackend {
         roundId: String,
         bundleIndex: UInt32,
         proposalId: UInt32
-    ) throws -> VotingTxHashLookup {
+    ) throws -> String? {
         let roundIdBytes = [UInt8](roundId.utf8)
         let ptr: UnsafeMutablePointer<FfiBoxedSlice> = try withHandle { dbh in
             let ptr: UnsafeMutablePointer<FfiBoxedSlice>? = roundIdBytes.withUnsafeBufferPointer { buf in
@@ -852,8 +851,7 @@ extension VotingRustBackend {
             return ptr
         }
         defer { zcashlc_free_boxed_slice(ptr) }
-        let stored: String? = try decodeJSON(from: ptr)
-        return stored.map { .present($0) } ?? .notFound
+        return try decodeJSON(from: ptr)
     }
 
     /// Persist a vote-commitment bundle as raw JSON, plus its position in the

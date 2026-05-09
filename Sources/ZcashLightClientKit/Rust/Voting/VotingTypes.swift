@@ -431,16 +431,6 @@ public struct VotingVanWitness: Codable, Sendable {
     }
 }
 
-// MARK: - TX hash lookup
-
-/// Result of a stored-tx-hash lookup for a delegation or vote bundle.
-public enum VotingTxHashLookup: Equatable, Sendable {
-    /// No record exists for the given key (round/bundle or round/bundle/proposal).
-    case notFound
-    /// A record exists and contains the given tx hash.
-    case present(String)
-}
-
 // MARK: - Keystone signature record (JSON)
 
 /// A persisted Keystone-produced PCZT signature for a delegation bundle.

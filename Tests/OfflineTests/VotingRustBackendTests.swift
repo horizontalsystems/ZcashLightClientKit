@@ -4,10 +4,43 @@
 //
 
 import XCTest
+import SQLite3
 @testable import ZcashLightClientKit
 
 final class VotingRustBackendTests: XCTestCase {
     private var dbPath: String?
+
+    private enum RoundTripFixture {
+        static let walletId = "test-wallet"
+        static let roundId = "round"
+        static let bundleIndex: UInt32 = 0
+        static let proposalId: UInt32 = 1
+        static let shareIndex0: UInt32 = 0
+        static let shareIndex1: UInt32 = 1
+        static let snapshotHeight: UInt64 = 1
+        static let voteCommitmentTreePosition: UInt64 = 42
+        static let delegationTxHash = "delegation-tx-hash"
+        static let voteTxHash = "vote-tx-hash"
+        static let commitmentBundleJson = #"{"vote_commitment":[1,2,3],"proposal_id":1}"#
+        static let helperAURL = "https://helper-a.example"
+        static let helperBURL = "https://helper-b.example"
+        static let firstSubmitAt: UInt64 = 1000
+        static let secondSubmitAt: UInt64 = 2000
+        static let createdAt: Int64 = 1_000
+        static let fieldElementByteCount = 32
+        static let keystoneSignatureByteCount = 64
+        static let diversifierByteCount = 11
+        static let eligibleNoteValue: UInt64 = 13_000_000
+        static let sqliteSuccessCode = SQLITE_OK
+        static let sqliteDoneCode = SQLITE_DONE
+
+        static let roundParameter = [UInt8](repeating: 0x07, count: fieldElementByteCount)
+        static let keystoneSignature = [UInt8](repeating: 0x01, count: keystoneSignatureByteCount)
+        static let pcztSighash = [UInt8](repeating: 0x02, count: fieldElementByteCount)
+        static let randomizedKey = [UInt8](repeating: 0x03, count: fieldElementByteCount)
+        static let shareNullifier = [UInt8](repeating: 0xDD, count: fieldElementByteCount)
+        static let voteCommitment = [UInt8](repeating: 0xAA, count: fieldElementByteCount)
+    }
 
     override func tearDown() {
         if let dbPath {
@@ -462,6 +495,34 @@ final class VotingRustBackendTests: XCTestCase {
 
     // MARK: - Recovery state
 
+    func test_delegationTxHash_roundTrips() throws {
+        let backend = try makeReadyBackend()
+        defer { backend.close() }
+
+        try createRoundWithBundle(backend, roundId: RoundTripFixture.roundId)
+
+        XCTAssertNil(
+            try backend.getDelegationTxHash(
+                roundId: RoundTripFixture.roundId,
+                bundleIndex: RoundTripFixture.bundleIndex
+            )
+        )
+
+        try backend.storeDelegationTxHash(
+            roundId: RoundTripFixture.roundId,
+            bundleIndex: RoundTripFixture.bundleIndex,
+            txHash: RoundTripFixture.delegationTxHash
+        )
+
+        XCTAssertEqual(
+            try backend.getDelegationTxHash(
+                roundId: RoundTripFixture.roundId,
+                bundleIndex: RoundTripFixture.bundleIndex
+            ),
+            RoundTripFixture.delegationTxHash
+        )
+    }
+
     func test_storeDelegationTxHash_throwsRustError_whenBundleMissing() throws {
         let backend = try makeReadyBackend()
         defer { backend.close() }
@@ -474,6 +535,109 @@ final class VotingRustBackendTests: XCTestCase {
                 return
             }
         }
+    }
+
+    func test_voteTxHash_roundTrips() throws {
+        let backend = try makeReadyBackend(walletId: RoundTripFixture.walletId)
+        defer { backend.close() }
+
+        try createRoundWithBundle(backend, roundId: RoundTripFixture.roundId)
+        try insertVoteRow(
+            roundId: RoundTripFixture.roundId,
+            walletId: RoundTripFixture.walletId,
+            bundleIndex: RoundTripFixture.bundleIndex,
+            proposalId: RoundTripFixture.proposalId
+        )
+
+        XCTAssertNil(
+            try backend.getVoteTxHash(
+                roundId: RoundTripFixture.roundId,
+                bundleIndex: RoundTripFixture.bundleIndex,
+                proposalId: RoundTripFixture.proposalId
+            )
+        )
+
+        try backend.storeVoteTxHash(
+            roundId: RoundTripFixture.roundId,
+            bundleIndex: RoundTripFixture.bundleIndex,
+            proposalId: RoundTripFixture.proposalId,
+            txHash: RoundTripFixture.voteTxHash
+        )
+
+        XCTAssertEqual(
+            try backend.getVoteTxHash(
+                roundId: RoundTripFixture.roundId,
+                bundleIndex: RoundTripFixture.bundleIndex,
+                proposalId: RoundTripFixture.proposalId
+            ),
+            RoundTripFixture.voteTxHash
+        )
+    }
+
+    func test_commitmentBundle_roundTrips() throws {
+        let backend = try makeReadyBackend(walletId: RoundTripFixture.walletId)
+        defer { backend.close() }
+
+        try createRoundWithBundle(backend, roundId: RoundTripFixture.roundId)
+        try insertVoteRow(
+            roundId: RoundTripFixture.roundId,
+            walletId: RoundTripFixture.walletId,
+            bundleIndex: RoundTripFixture.bundleIndex,
+            proposalId: RoundTripFixture.proposalId
+        )
+
+        XCTAssertNil(
+            try backend.getCommitmentBundle(
+                roundId: RoundTripFixture.roundId,
+                bundleIndex: RoundTripFixture.bundleIndex,
+                proposalId: RoundTripFixture.proposalId
+            )
+        )
+
+        try backend.storeCommitmentBundle(
+            roundId: RoundTripFixture.roundId,
+            bundleIndex: RoundTripFixture.bundleIndex,
+            proposalId: RoundTripFixture.proposalId,
+            bundleJson: RoundTripFixture.commitmentBundleJson,
+            voteCommitmentTreePosition: RoundTripFixture.voteCommitmentTreePosition
+        )
+
+        let stored = try XCTUnwrap(
+            backend.getCommitmentBundle(
+                roundId: RoundTripFixture.roundId,
+                bundleIndex: RoundTripFixture.bundleIndex,
+                proposalId: RoundTripFixture.proposalId
+            )
+        )
+        XCTAssertEqual(stored.bundleJson, RoundTripFixture.commitmentBundleJson)
+        XCTAssertEqual(stored.voteCommitmentTreePosition, RoundTripFixture.voteCommitmentTreePosition)
+    }
+
+    func test_keystoneSignature_roundTrips() throws {
+        let backend = try makeReadyBackend()
+        defer { backend.close() }
+
+        try createRoundWithBundle(backend, roundId: RoundTripFixture.roundId)
+
+        try backend.storeKeystoneSignature(
+            roundId: RoundTripFixture.roundId,
+            bundleIndex: RoundTripFixture.bundleIndex,
+            sig: RoundTripFixture.keystoneSignature,
+            sighash: RoundTripFixture.pcztSighash,
+            randomizedKey: RoundTripFixture.randomizedKey
+        )
+
+        XCTAssertEqual(
+            try backend.getKeystoneSignatures(roundId: RoundTripFixture.roundId),
+            [
+                VotingKeystoneSignatureRecord(
+                    bundleIndex: RoundTripFixture.bundleIndex,
+                    sig: RoundTripFixture.keystoneSignature,
+                    sighash: RoundTripFixture.pcztSighash,
+                    randomizedKey: RoundTripFixture.randomizedKey
+                )
+            ]
+        )
     }
 
     func test_storeKeystoneSignature_rejectsBadLengths() throws {
@@ -539,6 +703,63 @@ final class VotingRustBackendTests: XCTestCase {
     }
 
     // MARK: - Share delegation tracking
+
+    func test_shareDelegationLifecycle_roundTrips() throws {
+        let backend = try makeReadyBackend()
+        defer { backend.close() }
+
+        try createRoundWithBundle(backend, roundId: RoundTripFixture.roundId)
+
+        try backend.recordShareDelegation(
+            roundId: RoundTripFixture.roundId,
+            bundleIndex: RoundTripFixture.bundleIndex,
+            proposalId: RoundTripFixture.proposalId,
+            shareIndex: RoundTripFixture.shareIndex0,
+            sentToURLs: [RoundTripFixture.helperAURL],
+            nullifier: RoundTripFixture.shareNullifier,
+            submitAt: RoundTripFixture.firstSubmitAt
+        )
+        try backend.recordShareDelegation(
+            roundId: RoundTripFixture.roundId,
+            bundleIndex: RoundTripFixture.bundleIndex,
+            proposalId: RoundTripFixture.proposalId,
+            shareIndex: RoundTripFixture.shareIndex1,
+            sentToURLs: [RoundTripFixture.helperBURL],
+            nullifier: RoundTripFixture.shareNullifier,
+            submitAt: RoundTripFixture.secondSubmitAt
+        )
+
+        let all = try backend.getShareDelegations(roundId: RoundTripFixture.roundId)
+        XCTAssertEqual(all.count, 2)
+
+        let share0 = try XCTUnwrap(all.first { $0.shareIndex == RoundTripFixture.shareIndex0 })
+        XCTAssertEqual(share0.roundId, RoundTripFixture.roundId)
+        XCTAssertEqual(share0.bundleIndex, RoundTripFixture.bundleIndex)
+        XCTAssertEqual(share0.proposalId, RoundTripFixture.proposalId)
+        XCTAssertEqual(share0.sentToURLs, [RoundTripFixture.helperAURL])
+        XCTAssertEqual(share0.nullifier, RoundTripFixture.shareNullifier)
+        XCTAssertFalse(share0.confirmed)
+        XCTAssertEqual(share0.submitAt, RoundTripFixture.firstSubmitAt)
+
+        XCTAssertEqual(try backend.getUnconfirmedDelegations(roundId: RoundTripFixture.roundId).count, 2)
+
+        try backend.markShareConfirmed(
+            roundId: RoundTripFixture.roundId,
+            bundleIndex: RoundTripFixture.bundleIndex,
+            proposalId: RoundTripFixture.proposalId,
+            shareIndex: RoundTripFixture.shareIndex0
+        )
+
+        let confirmedShare = try XCTUnwrap(
+            backend.getShareDelegations(roundId: RoundTripFixture.roundId)
+                .first { $0.shareIndex == RoundTripFixture.shareIndex0 }
+        )
+        XCTAssertTrue(confirmedShare.confirmed)
+
+        let unconfirmed = try backend.getUnconfirmedDelegations(roundId: RoundTripFixture.roundId)
+        XCTAssertEqual(unconfirmed.count, 1)
+        XCTAssertEqual(unconfirmed[0].shareIndex, RoundTripFixture.shareIndex1)
+    }
 
     func test_recordShareDelegation_rejectsInvalidNullifierLength() throws {
         let backend = try makeReadyBackend()
@@ -846,11 +1067,147 @@ final class VotingRustBackendTests: XCTestCase {
         return path
     }
 
-    private func makeReadyBackend(walletId: String = "test-wallet") throws -> VotingRustBackend {
+    private func makeReadyBackend(walletId: String = RoundTripFixture.walletId) throws -> VotingRustBackend {
         let backend = VotingRustBackend()
         try backend.open(path: makeTempDbPath())
         try backend.setWalletId(walletId)
         return backend
+    }
+
+    private func createRoundWithBundle(
+        _ backend: VotingRustBackend,
+        roundId: String
+    ) throws {
+        try backend.initRound(
+            roundId: roundId,
+            snapshotHeight: RoundTripFixture.snapshotHeight,
+            eaPublicKey: RoundTripFixture.roundParameter,
+            ncRoot: RoundTripFixture.roundParameter,
+            nullifierImtRoot: RoundTripFixture.roundParameter
+        )
+
+        let result = try backend.setupBundles(
+            roundId: roundId,
+            notes: [makeEligibleNote()]
+        )
+        XCTAssertEqual(result.bundleCount, 1)
+    }
+
+    private func makeEligibleNote() -> VotingNoteInfo {
+        VotingNoteInfo(
+            commitment: [UInt8](repeating: 0x01, count: RoundTripFixture.fieldElementByteCount),
+            nullifier: [UInt8](repeating: 0x02, count: RoundTripFixture.fieldElementByteCount),
+            value: RoundTripFixture.eligibleNoteValue,
+            position: 0,
+            diversifier: [UInt8](repeating: 0, count: RoundTripFixture.diversifierByteCount),
+            rho: [UInt8](repeating: 0, count: RoundTripFixture.fieldElementByteCount),
+            rseed: [UInt8](repeating: 0, count: RoundTripFixture.fieldElementByteCount),
+            scope: 0,
+            ufvkStr: ""
+        )
+    }
+
+    private func insertVoteRow(
+        roundId: String,
+        walletId: String,
+        bundleIndex: UInt32,
+        proposalId: UInt32
+    ) throws {
+        let path = try XCTUnwrap(dbPath)
+        var db: OpaquePointer?
+        try requireSQLite(
+            sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, nil),
+            db,
+            message: "open voting database"
+        )
+        defer { sqlite3_close(db) }
+
+        let sql = """
+        INSERT INTO votes (
+            round_id,
+            wallet_id,
+            bundle_index,
+            proposal_id,
+            choice,
+            commitment,
+            created_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        """
+        var statement: OpaquePointer?
+        try requireSQLite(
+            sqlite3_prepare_v2(db, sql, -1, &statement, nil),
+            db,
+            message: "prepare vote insert"
+        )
+        defer { sqlite3_finalize(statement) }
+
+        let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        let commitment = RoundTripFixture.voteCommitment
+
+        try roundId.withCString { roundIdPointer in
+            try requireSQLite(
+                sqlite3_bind_text(statement, 1, roundIdPointer, -1, sqliteTransient),
+                db,
+                message: "bind round_id"
+            )
+        }
+        try walletId.withCString { walletIdPointer in
+            try requireSQLite(
+                sqlite3_bind_text(statement, 2, walletIdPointer, -1, sqliteTransient),
+                db,
+                message: "bind wallet_id"
+            )
+        }
+        try requireSQLite(
+            sqlite3_bind_int64(statement, 3, sqlite3_int64(bundleIndex)),
+            db,
+            message: "bind bundle_index"
+        )
+        try requireSQLite(
+            sqlite3_bind_int64(statement, 4, sqlite3_int64(proposalId)),
+            db,
+            message: "bind proposal_id"
+        )
+        try requireSQLite(
+            sqlite3_bind_int64(statement, 5, 0),
+            db,
+            message: "bind choice"
+        )
+        try commitment.withUnsafeBufferPointer { buffer in
+            try requireSQLite(
+                sqlite3_bind_blob(statement, 6, buffer.baseAddress, Int32(buffer.count), sqliteTransient),
+                db,
+                message: "bind commitment"
+            )
+        }
+        try requireSQLite(
+            sqlite3_bind_int64(statement, 7, sqlite3_int64(RoundTripFixture.createdAt)),
+            db,
+            message: "bind created_at"
+        )
+
+        try requireSQLite(
+            sqlite3_step(statement),
+            db,
+            expected: RoundTripFixture.sqliteDoneCode,
+            message: "insert vote row"
+        )
+    }
+
+    private func requireSQLite(
+        _ code: Int32,
+        _ db: OpaquePointer?,
+        expected: Int32 = RoundTripFixture.sqliteSuccessCode,
+        message: String
+    ) throws {
+        guard code == expected else {
+            let details = db.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown SQLite error"
+            throw NSError(
+                domain: "VotingRustBackendTests.SQLite",
+                code: Int(code),
+                userInfo: [NSLocalizedDescriptionKey: "\(message): \(details)"]
+            )
+        }
     }
 }
 
