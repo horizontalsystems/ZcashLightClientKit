@@ -15,6 +15,7 @@ private enum VotingByteCount {
     static let minSeed = 32
     static let seedFingerprint = 32
     static let shareNullifier = 32
+    static let shareNullifierHex = shareNullifier * 2
     static let keystoneSignature = 64
     static let pcztSighash = 32
     static let randomizedKey = 32
@@ -24,6 +25,15 @@ private enum VotingByteCount {
     static let pirPath = pirPathElementCount * pirRoot
     static let pirNullifier = 32
     static let pirExpectedRoot = 32
+}
+
+private enum CharacterByte {
+    static let zero: UInt8 = 48
+    static let nine: UInt8 = 57
+    static let uppercaseA: UInt8 = 65
+    static let uppercaseF: UInt8 = 70
+    static let lowercaseA: UInt8 = 97
+    static let lowercaseF: UInt8 = 102
 }
 
 // MARK: - Error
@@ -1032,27 +1042,32 @@ extension VotingRustBackend {
         proposalId: UInt32,
         shareIndex: UInt32,
         sentToURLs: [String],
-        nullifier: [UInt8],
+        nullifier: String,
         submitAt: UInt64
     ) throws {
-        guard nullifier.count == VotingByteCount.shareNullifier else {
+        guard nullifier.count == VotingByteCount.shareNullifierHex else {
             throw VotingRustBackendError.invalidData(
-                "nullifier must be exactly \(VotingByteCount.shareNullifier) bytes"
+                "nullifier must be exactly \(VotingByteCount.shareNullifierHex) hex characters"
             )
         }
+        guard Self.isHexString(nullifier) else {
+            throw VotingRustBackendError.invalidData("nullifier must be hex encoded")
+        }
+
         let roundIdBytes = [UInt8](roundId.utf8)
         let urlsJson = try JSONEncoder().encode(sentToURLs)
         let urlsBytes = [UInt8](urlsJson)
+        let nullifierHexBytes = [UInt8](nullifier.utf8)
 
-      try recordShareDelegation(
-                roundIdBytes: roundIdBytes,
-                bundleIndex: bundleIndex,
-                proposalId: proposalId,
-                shareIndex: shareIndex,
-                urlsBytes: urlsBytes,
-                nullifierArgument: Self.hexBytes(for: nullifier),
-                submitAt: submitAt
-            )
+        try recordShareDelegation(
+            roundIdBytes: roundIdBytes,
+            bundleIndex: bundleIndex,
+            proposalId: proposalId,
+            shareIndex: shareIndex,
+            urlsBytes: urlsBytes,
+            nullifierHexBytes: nullifierHexBytes,
+            submitAt: submitAt
+        )
     }
 
     private func recordShareDelegation(
@@ -1061,13 +1076,13 @@ extension VotingRustBackend {
         proposalId: UInt32,
         shareIndex: UInt32,
         urlsBytes: [UInt8],
-        nullifierArgument: [UInt8],
+        nullifierHexBytes: [UInt8],
         submitAt: UInt64
     ) throws {
         try withHandle { dbh in
             let result = roundIdBytes.withUnsafeBufferPointer { ridBuf in
                 urlsBytes.withUnsafeBufferPointer { urlsBuf in
-                    nullifierArgument.withUnsafeBufferPointer { nfBuf in
+                    nullifierHexBytes.withUnsafeBufferPointer { nfBuf in
                         zcashlc_voting_record_share_delegation(
                             dbh,
                             ridBuf.baseAddress,
@@ -1630,12 +1645,12 @@ private extension VotingRustBackend {
         return phase
     }
 
-    static func hexString(for bytes: [UInt8]) -> String {
-        bytes.map { String(format: "%02x", $0) }.joined()
-    }
-
-    static func hexBytes(for bytes: [UInt8]) -> [UInt8] {
-        [UInt8](hexString(for: bytes).utf8)
+    static func isHexString(_ value: String) -> Bool {
+        value.utf8.allSatisfy { byte in
+            (byte >= CharacterByte.zero && byte <= CharacterByte.nine)
+                || (byte >= CharacterByte.lowercaseA && byte <= CharacterByte.lowercaseF)
+                || (byte >= CharacterByte.uppercaseA && byte <= CharacterByte.uppercaseF)
+        }
     }
 
     /// Decode required C strings from Rust, treating null as an invariant violation.

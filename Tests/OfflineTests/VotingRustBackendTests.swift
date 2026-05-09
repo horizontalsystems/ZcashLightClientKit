@@ -38,7 +38,7 @@ final class VotingRustBackendTests: XCTestCase {
         static let keystoneSignature = [UInt8](repeating: 0x01, count: keystoneSignatureByteCount)
         static let pcztSighash = [UInt8](repeating: 0x02, count: fieldElementByteCount)
         static let randomizedKey = [UInt8](repeating: 0x03, count: fieldElementByteCount)
-        static let shareNullifier = [UInt8](repeating: 0xDD, count: fieldElementByteCount)
+        static let shareNullifier = String(repeating: "dd", count: fieldElementByteCount)
         static let voteCommitment = [UInt8](repeating: 0xAA, count: fieldElementByteCount)
     }
 
@@ -704,7 +704,7 @@ final class VotingRustBackendTests: XCTestCase {
 
     // MARK: - Share delegation tracking
 
-    func test_shareDelegationLifecycle_roundTripsRawNullifierBytes() throws {
+    func test_shareDelegationLifecycle_roundTripsHexNullifier() throws {
         let backend = try makeReadyBackend()
         defer { backend.close() }
 
@@ -765,7 +765,7 @@ final class VotingRustBackendTests: XCTestCase {
         let backend = try makeReadyBackend()
         defer { backend.close() }
 
-        let bad = [UInt8](repeating: 0xAA, count: 31)
+        let bad = String(repeating: "aa", count: 31)
         XCTAssertThrowsError(
             try backend.recordShareDelegation(
                 roundId: "round",

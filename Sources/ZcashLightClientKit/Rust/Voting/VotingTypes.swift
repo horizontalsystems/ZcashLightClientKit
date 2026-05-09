@@ -185,7 +185,7 @@ public struct VotingShareDelegation: Codable, Equatable, Sendable {
     public let proposalId: UInt32
     public let shareIndex: UInt32
     public let sentToURLs: [String]
-    public let nullifier: [UInt8]
+    public let nullifier: String
     public let confirmed: Bool
     public let submitAt: UInt64
     public let createdAt: UInt64
