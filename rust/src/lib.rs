@@ -96,6 +96,7 @@ mod derivation;
 mod eip681;
 mod ffi;
 mod tor;
+mod voting;
 
 #[cfg(target_vendor = "apple")]
 mod os_log;
@@ -4136,13 +4137,23 @@ pub unsafe extern "C" fn zcashlc_tor_lwd_conn_check_single_use_taddr(
 // Utility functions
 //
 
-fn parse_network(value: u32) -> anyhow::Result<Network> {
+/// `network_id` value for Testnet, accepted by [`parse_network`] and every
+/// `zcashlc_*` FFI that takes a `network_id` parameter.
+pub(crate) const NETWORK_ID_TESTNET: u32 = 0;
+
+/// `network_id` value for Mainnet, accepted by [`parse_network`] and every
+/// `zcashlc_*` FFI that takes a `network_id` parameter.
+pub(crate) const NETWORK_ID_MAINNET: u32 = 1;
+
+pub(crate) fn parse_network(value: u32) -> anyhow::Result<Network> {
     match value {
-        0 => Ok(TestNetwork),
-        1 => Ok(MainNetwork),
+        NETWORK_ID_TESTNET => Ok(TestNetwork),
+        NETWORK_ID_MAINNET => Ok(MainNetwork),
         _ => Err(anyhow!(
-            "Invalid network type: {}. Expected either 0 or 1 for Testnet or Mainnet, respectively.",
-            value
+            "Invalid network type: {}. Expected either {} or {} for Testnet or Mainnet, respectively.",
+            value,
+            NETWORK_ID_TESTNET,
+            NETWORK_ID_MAINNET,
         )),
     }
 }

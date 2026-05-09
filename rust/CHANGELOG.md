@@ -6,6 +6,55 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+- `zcashlc_voting_compute_share_nullifier`: Compute the 32-byte share-reveal
+  nullifier from a vote commitment, primary blind, and share index. Returns
+  the nullifier as a 64-character hex C-string; the caller must free the
+  returned pointer via `zcashlc_string_free`. Returns `NULL` on error or
+  panic. Pure-function FFI: no wallet DB, voting DB, network, randomness,
+  or secret material involved.
+- `zcashlc_voting_validate_pir_proof`: Validate a PIR-fetched IMT
+  non-membership proof against an expected root.
+- `zcashlc_voting_db_open`, `zcashlc_voting_db_free`, and
+  `zcashlc_voting_set_wallet_id`: Manage the voting database handle used by
+  stateful voting FFI calls.
+- `zcashlc_voting_precompute_delegation_pir`: Precompute and cache delegation
+  PIR IMT proofs for a voting bundle using the configured voting database and
+  caller-supplied PIR endpoint.
+- `zcashlc_voting_sync_vote_tree`: Sync the vote commitment tree for a round
+  from a chain node URL, returning the latest synced block height (>= 0) on
+  success, or -1 on error.
+- `zcashlc_voting_generate_van_witness`: Generate a vote authority note Merkle witness for
+  the second voting ZKP and return it as a JSON-encoded `VanWitness`
+  (`auth_path`, `position`, `anchor_height`) in a `*mut FfiBoxedSlice`.
+- `zcashlc_voting_reset_tree_client`: Drop the in-memory tree client for a
+  round so the next `zcashlc_voting_sync_vote_tree` call creates a fresh one.
+- `VotingDatabaseHandle` now also carries a
+  `zcash_voting::tree_sync::VoteTreeSync`, constructed in
+  `zcashlc_voting_db_open` and consumed by the tree-sync FFI above.
+- `zcashlc_voting_get_wallet_notes`: Load unspent Orchard notes for a wallet
+  account at a snapshot height and return them as JSON-encoded
+  `Vec<NoteInfo>` in a `*mut FfiBoxedSlice`. `account_uuid` must be a non-null
+  pointer to exactly 16 bytes (binary account UUID). Returns `NULL` on error
+  or panic. Output is suitable as the `notes_json` input to
+  `zcashlc_voting_precompute_delegation_pir`.
+- `zcashlc_voting_extract_orchard_fvk_from_ufvk`: Decode a UFVK string and
+  return the raw 96-byte Orchard full viewing key in a
+  `*mut FfiBoxedSlice`. Returns `NULL` on missing Orchard component,
+  malformed UFVK, or invalid `network_id`.
+- Added `zcash_voting 0.5.3` (`default-features = false`, `client-pir`,
+  `client-tree-sync`) as a Rust dependency.
+- Added `zcash_keys 0.13` (`orchard` feature) as a Rust dependency, used by
+  the new wallet-notes and key-utility FFI for voting to decode UFVKs and derive
+  Orchard FVKs.
+
+### Changed
+- Pinned `orchard` to `=0.13.1` and enabled its `unstable-voting-circuits`
+  feature (required transitively by `zcash_voting`).
+- Enabled the `client-tree-sync` feature on `zcash_voting`, required by the
+  new tree-sync FFI symbols and by the `VoteTreeSync` field on
+  `VotingDatabaseHandle`.
+
 ## 2.4.6 - 2026-03-12
 
 ### Changed

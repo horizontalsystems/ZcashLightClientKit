@@ -592,6 +592,7 @@ extension CompactBlockProcessor {
     // swiftlint:disable:next cyclomatic_complexity
     private func run() async {
         logger.debug("Starting run")
+        self.serviceFailureRetryAttempts = 0
         metrics.cbpStart()
         await resetContext()
 
@@ -654,7 +655,10 @@ extension CompactBlockProcessor {
                     ZcashError.serviceSubmitFailed, ZcashError.serviceFetchTransactionFailed,
                     ZcashError.serviceFetchUTXOsFailed, ZcashError.serviceBlockStreamFailed,
                     ZcashError.serviceSubtreeRootsStreamFailed: serviceError = true
-                default: serviceError = false
+                default:
+                    // Non-ZcashError exceptions are raw gRPC/transport failures that escaped without
+                    // proper wrapping — treat them as service errors so the retry logic kicks in
+                    serviceError = !(error is ZcashError)
                 }
 
                 if serviceError && self.serviceFailureRetryAttempts < ZcashSDK.serviceFailureRetries {
@@ -663,7 +667,10 @@ extension CompactBlockProcessor {
                     logger.error("ServiceError: \(error), retry is available, starting the sync all over again.")
 
                     self.serviceFailureRetryAttempts += 1
-                    
+
+                    // Force a fresh gRPC channel — the existing one may be in a degraded state after an HTTP/2 stream cancellation
+                    await service.closeConnections()
+
                     // Start sync all over again
                     await resetContext()
                 } else if Task.isCancelled {

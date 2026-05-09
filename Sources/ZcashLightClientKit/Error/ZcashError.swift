@@ -1216,3 +1216,9 @@ public enum ZcashError: Equatable, Error {
         return lhs.code == rhs.code
     }
 }
+
+extension ZcashError: LocalizedError {
+    public var errorDescription: String? {
+        "\(code.rawValue): \(message)"
+    }
+}
