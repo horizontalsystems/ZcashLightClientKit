@@ -1061,7 +1061,7 @@ extension VotingRustBackend {
                 proposalId: proposalId,
                 shareIndex: shareIndex,
                 urlsBytes: urlsBytes,
-                nullifierArgument: [UInt8](Self.hexString(for: nullifier).utf8),
+                nullifierArgument: Self.hexBytes(for: nullifier),
                 submitAt: submitAt
             )
         }
@@ -1644,6 +1644,10 @@ private extension VotingRustBackend {
 
     static func hexString(for bytes: [UInt8]) -> String {
         bytes.map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func hexBytes(for bytes: [UInt8]) -> [UInt8] {
+        [UInt8](hexString(for: bytes).utf8)
     }
 
     /// Decode required C strings from Rust, treating null as an invariant violation.

@@ -704,7 +704,7 @@ final class VotingRustBackendTests: XCTestCase {
 
     // MARK: - Share delegation tracking
 
-    func test_shareDelegationLifecycle_roundTrips() throws {
+    func test_shareDelegationLifecycle_roundTripsRawNullifierBytes() throws {
         let backend = try makeReadyBackend()
         defer { backend.close() }
 
