@@ -488,6 +488,18 @@ mod tests {
     }
 
     #[test]
+    fn mark_vote_submitted_rejects_missing_vote_row() {
+        let db = open_memory_db();
+        let round = b"round";
+
+        let result =
+            unsafe { zcashlc_voting_mark_vote_submitted(db, round.as_ptr(), round.len(), 0, 1) };
+
+        unsafe { zcashlc_voting_db_free(db) };
+        assert_eq!(result, -1);
+    }
+
+    #[test]
     fn build_vote_commitment_rejects_wrong_sized_auth_path_sibling() {
         let db = open_memory_db();
         let round = b"round";
