@@ -241,7 +241,7 @@ pub unsafe extern "C" fn zcashlc_voting_mark_vote_submitted(
 ///
 /// Takes fields from `VoteCommitmentBundle` plus the hotkey seed and computes
 /// the spend authorization signature.
-/// `vote_round_id_hex` must encode exactly 32 bytes. `r_vpk_bytes`,
+/// `vote_round_id_hex` must encode exactly 32 bytes as ASCII hex. `r_vpk_bytes`,
 /// `van_nullifier`, `vote_authority_note_new`, `vote_commitment`, and
 /// `alpha_v` must each be exactly 32 bytes.
 ///
@@ -289,6 +289,7 @@ pub unsafe extern "C" fn zcashlc_voting_sign_cast_vote(
                 round_id.len()
             ));
         }
+        require_ascii_hex(&round_id, "vote_round_id_hex")?;
         require_32_bytes(r_vpk, "r_vpk_bytes")?;
         require_32_bytes(van_nf, "van_nullifier")?;
         require_32_bytes(van_new, "vote_authority_note_new")?;
@@ -335,6 +336,13 @@ fn require_min_seed_len(bytes: &[u8], name: &str) -> anyhow::Result<()> {
             MIN_SEED_LEN,
             bytes.len()
         ));
+    }
+    Ok(())
+}
+
+fn require_ascii_hex(value: &str, name: &str) -> anyhow::Result<()> {
+    if !value.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(anyhow!("{name} must contain only ASCII hex characters"));
     }
     Ok(())
 }
@@ -680,6 +688,17 @@ mod tests {
         assert!(
             call_sign_cast_vote(round_id_hex, &bytes, &bytes, &bytes, &long, &bytes).is_null(),
             "long vote_commitment must be rejected"
+        );
+    }
+
+    #[test]
+    fn sign_cast_vote_rejects_non_hex_round_id() {
+        let round_id_hex = b"000000000000000000000000000000000000000000000000000000000000000g";
+        let bytes = [0u8; CANONICAL_FIELD_LEN];
+
+        assert!(
+            call_sign_cast_vote(round_id_hex, &bytes, &bytes, &bytes, &bytes, &bytes).is_null(),
+            "non-hex round_id_hex must be rejected"
         );
     }
 
