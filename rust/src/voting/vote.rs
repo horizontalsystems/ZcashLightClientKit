@@ -354,6 +354,10 @@ mod tests {
     use crate::ffi::zcashlc_free_boxed_slice;
     use crate::voting::db::zcashlc_voting_db_free;
     use crate::voting::test_helpers::{insert_round_and_bundle, open_memory_db};
+    use pasta_curves::{
+        group::{Group, GroupEncoding},
+        pallas,
+    };
     use serde::de::DeserializeOwned;
 
     fn decode_boxed_json<T: DeserializeOwned>(ptr: *mut crate::ffi::BoxedSlice) -> T {
@@ -362,6 +366,18 @@ mod tests {
         let value = serde_json::from_slice(&json).expect("decode boxed JSON");
         unsafe { zcashlc_free_boxed_slice(ptr) };
         value
+    }
+
+    fn insert_round_with_valid_ea_pk(db: *mut VotingDatabaseHandle, round_id: &str) {
+        let handle = unsafe { db.as_ref() }.expect("voting db handle");
+        let params = voting::VotingRoundParams {
+            vote_round_id: round_id.to_string(),
+            snapshot_height: 123,
+            ea_pk: pallas::Point::generator().to_bytes().to_vec(),
+            nc_root: vec![8u8; 32],
+            nullifier_imt_root: vec![9u8; 32],
+        };
+        handle.db.init_round(&params, None).expect("insert round");
     }
 
     #[test]
@@ -501,6 +517,34 @@ mod tests {
             malformed_commitment_result.is_null(),
             "malformed commitment_json must be rejected"
         );
+    }
+
+    #[test]
+    fn encrypt_shares_returns_encrypted_shares() {
+        let db = open_memory_db();
+        let round = b"round";
+        insert_round_with_valid_ea_pk(db, "round");
+        let shares_json = serde_json::to_vec(&vec![1u64, 4]).expect("serialize shares");
+
+        let result = unsafe {
+            zcashlc_voting_encrypt_shares(
+                db,
+                round.as_ptr(),
+                round.len(),
+                shares_json.as_ptr(),
+                shares_json.len(),
+            )
+        };
+        let shares: Vec<JsonWireEncryptedShare> = decode_boxed_json(result);
+
+        unsafe { zcashlc_voting_db_free(db) };
+        assert_eq!(shares.len(), 2);
+        assert_eq!(shares[0].share_index, 0);
+        assert_eq!(shares[1].share_index, 1);
+        assert_eq!(shares[0].c1.len(), CANONICAL_FIELD_LEN);
+        assert_eq!(shares[0].c2.len(), CANONICAL_FIELD_LEN);
+        assert_eq!(shares[1].c1.len(), CANONICAL_FIELD_LEN);
+        assert_eq!(shares[1].c2.len(), CANONICAL_FIELD_LEN);
     }
 
     #[test]
