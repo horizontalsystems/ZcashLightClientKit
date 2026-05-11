@@ -8,6 +8,7 @@ use zip32::AccountId;
 
 use crate::{unwrap_exc_or, unwrap_exc_or_null};
 
+use super::constants::SEED_FINGERPRINT_LEN;
 use super::helpers::{
     bytes_from_ptr, derive_hotkey_side_inputs, json_to_boxed_slice, str_from_ptr, usk_from_seed,
 };
@@ -132,9 +133,10 @@ pub unsafe extern "C" fn zcashlc_voting_generate_delegation_inputs_with_fvk(
         if fvk.len() != 96 {
             return Err(anyhow!("fvk_bytes must be 96 bytes, got {}", fvk.len()));
         }
-        if seed_fp.len() != 32 {
+        if seed_fp.len() != SEED_FINGERPRINT_LEN {
             return Err(anyhow!(
-                "seed_fingerprint must be 32 bytes, got {}",
+                "seed_fingerprint must be {} bytes, got {}",
+                SEED_FINGERPRINT_LEN,
                 seed_fp.len()
             ));
         }
