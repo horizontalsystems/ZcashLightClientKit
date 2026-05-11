@@ -52,6 +52,11 @@ pub unsafe extern "C" fn zcashlc_voting_store_delegation_tx_hash(
             unsafe { db.as_ref() }.ok_or_else(|| anyhow!("VotingDatabaseHandle is null"))?;
         let round_id_str = unsafe { str_from_ptr(round_id, round_id_len) }?;
         let tx_hash_str = unsafe { str_from_ptr(tx_hash, tx_hash_len) }?;
+        // Check if the bundle exists
+        handle
+            .db
+            .get_delegation_tx_hash(&round_id_str, bundle_index)
+            .map_err(|e| anyhow!("store_delegation_tx_hash failed: {}", e))?;
         handle
             .db
             .store_delegation_tx_hash(&round_id_str, bundle_index, &tx_hash_str)
@@ -390,6 +395,27 @@ mod tests {
         };
         let actual: Option<String> = decode_boxed_json(result);
         assert_eq!(actual.as_deref(), Some("delegation-tx"));
+
+        unsafe { zcashlc_voting_db_free(db) };
+    }
+
+    #[test]
+    fn store_delegation_tx_hash_rejects_missing_bundle() {
+        let db = open_memory_db();
+        let round_id = b"missing";
+        let tx_hash = b"delegation-tx";
+
+        let code = unsafe {
+            zcashlc_voting_store_delegation_tx_hash(
+                db,
+                round_id.as_ptr(),
+                round_id.len(),
+                0,
+                tx_hash.as_ptr(),
+                tx_hash.len(),
+            )
+        };
+        assert_eq!(code, -1);
 
         unsafe { zcashlc_voting_db_free(db) };
     }
