@@ -6,16 +6,13 @@ use zcash_voting as voting;
 
 use crate::{unwrap_exc_or, unwrap_exc_or_null};
 
-use super::constants::MIN_SEED_LEN;
+use super::constants::{CANONICAL_FIELD_LEN, MIN_SEED_LEN, VOTE_ROUND_ID_HEX_LEN};
 use super::db::VotingDatabaseHandle;
 use super::helpers::{bytes_from_ptr, json_to_boxed_slice, str_from_ptr};
 use super::json::{
     JsonCastVoteSignature, JsonSharePayload, JsonVoteCommitmentBundle, JsonWireEncryptedShare,
 };
 use super::progress::ProgressBridge;
-
-const CANONICAL_FIELD_LEN: usize = 32;
-const VOTE_ROUND_ID_HEX_LEN: usize = CANONICAL_FIELD_LEN * 2;
 
 /// Encrypt voting shares for a round.
 ///
