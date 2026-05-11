@@ -6,27 +6,6 @@
 import Foundation
 import libzcashlc
 
-// MARK: - Constants
-
-private enum VotingByteCount {
-    static let fieldElement = 32
-    static let accountUuid = 16
-    static let orchardFvk = 96
-    static let minSeed = 32
-    static let seedFingerprint = 32
-    static let shareNullifier = 32
-    static let shareNullifierHex = shareNullifier * 2
-    static let keystoneSignature = 64
-    static let pcztSighash = 32
-    static let randomizedKey = 32
-    static let pirRoot = 32
-    static let pirNullifierBounds = 96
-    static let pirPathElementCount = 29
-    static let pirPath = pirPathElementCount * pirRoot
-    static let pirNullifier = 32
-    static let pirExpectedRoot = 32
-}
-
 private enum CharacterByte {
     static let zero: UInt8 = 48
     static let nine: UInt8 = 57
@@ -311,11 +290,11 @@ extension VotingRustBackend {
         primaryBlind: [UInt8]
     ) throws -> String {
         guard
-            voteCommitment.count == VotingByteCount.fieldElement,
-            primaryBlind.count == VotingByteCount.fieldElement
+            voteCommitment.count == votingFieldElementByteCount,
+            primaryBlind.count == votingFieldElementByteCount
         else {
             throw VotingRustBackendError.invalidData(
-                "voteCommitment and primaryBlind must each be exactly \(VotingByteCount.fieldElement) bytes"
+                "voteCommitment and primaryBlind must each be exactly \(votingFieldElementByteCount) bytes"
             )
         }
 
@@ -379,9 +358,12 @@ extension VotingRustBackend {
         networkId: UInt32,
         accountIndex: UInt32
     ) throws -> VotingDelegationInputs {
-        guard senderSeed.count >= VotingByteCount.minSeed, hotkeySeed.count >= VotingByteCount.minSeed else {
+        guard
+            senderSeed.count >= votingMinSeedByteCount,
+            hotkeySeed.count >= votingMinSeedByteCount
+        else {
             throw VotingRustBackendError.invalidData(
-                "senderSeed and hotkeySeed must each be at least \(VotingByteCount.minSeed) bytes"
+                "senderSeed and hotkeySeed must each be at least \(votingMinSeedByteCount) bytes"
             )
         }
         let ptr = senderSeed.withUnsafeBufferPointer { senderBuf in
@@ -413,19 +395,19 @@ extension VotingRustBackend {
         networkId: UInt32,
         seedFingerprint: [UInt8]
     ) throws -> VotingDelegationInputs {
-        guard senderFvk.count == VotingByteCount.orchardFvk else {
+        guard senderFvk.count == votingOrchardFvkByteCount else {
             throw VotingRustBackendError.invalidData(
-                "senderFvk must be exactly \(VotingByteCount.orchardFvk) bytes"
+                "senderFvk must be exactly \(votingOrchardFvkByteCount) bytes"
             )
         }
-        guard hotkeySeed.count >= VotingByteCount.minSeed else {
+        guard hotkeySeed.count >= votingMinSeedByteCount else {
             throw VotingRustBackendError.invalidData(
-                "hotkeySeed must be at least \(VotingByteCount.minSeed) bytes"
+                "hotkeySeed must be at least \(votingMinSeedByteCount) bytes"
             )
         }
-        guard seedFingerprint.count == VotingByteCount.seedFingerprint else {
+        guard seedFingerprint.count == votingSeedFingerprintByteCount else {
             throw VotingRustBackendError.invalidData(
-                "seedFingerprint must be exactly \(VotingByteCount.seedFingerprint) bytes"
+                "seedFingerprint must be exactly \(votingSeedFingerprintByteCount) bytes"
             )
         }
         let ptr = senderFvk.withUnsafeBufferPointer { fvkBuf in
@@ -714,9 +696,9 @@ extension VotingRustBackend {
         snapshotHeight: UInt64,
         networkId: UInt32
     ) throws -> [VotingNoteInfo] {
-        guard accountUuidBytes.count == VotingByteCount.accountUuid else {
+        guard accountUuidBytes.count == votingAccountUuidByteCount else {
             throw VotingRustBackendError.invalidData(
-                "accountUuidBytes must be exactly \(VotingByteCount.accountUuid) bytes"
+                "accountUuidBytes must be exactly \(votingAccountUuidByteCount) bytes"
             )
         }
         let pathBytes = [UInt8](dataDbPath.utf8)
@@ -952,19 +934,19 @@ extension VotingRustBackend {
         sighash: [UInt8],
         randomizedKey: [UInt8]
     ) throws {
-        guard sig.count == VotingByteCount.keystoneSignature else {
+        guard sig.count == votingKeystoneSignatureByteCount else {
             throw VotingRustBackendError.invalidData(
-                "sig must be exactly \(VotingByteCount.keystoneSignature) bytes"
+                "sig must be exactly \(votingKeystoneSignatureByteCount) bytes"
             )
         }
-        guard sighash.count == VotingByteCount.pcztSighash else {
+        guard sighash.count == votingPcztSighashByteCount else {
             throw VotingRustBackendError.invalidData(
-                "sighash must be exactly \(VotingByteCount.pcztSighash) bytes"
+                "sighash must be exactly \(votingPcztSighashByteCount) bytes"
             )
         }
-        guard randomizedKey.count == VotingByteCount.randomizedKey else {
+        guard randomizedKey.count == votingRandomizedKeyByteCount else {
             throw VotingRustBackendError.invalidData(
-                "randomizedKey must be exactly \(VotingByteCount.randomizedKey) bytes"
+                "randomizedKey must be exactly \(votingRandomizedKeyByteCount) bytes"
             )
         }
         let roundIdBytes = [UInt8](roundId.utf8)
@@ -1045,9 +1027,9 @@ extension VotingRustBackend {
         nullifier: String,
         submitAt: UInt64
     ) throws {
-        guard nullifier.count == VotingByteCount.shareNullifierHex else {
+        guard nullifier.count == votingShareNullifierHexCharacterCount else {
             throw VotingRustBackendError.invalidData(
-                "nullifier must be exactly \(VotingByteCount.shareNullifierHex) hex characters"
+                "nullifier must be exactly \(votingShareNullifierHexCharacterCount) hex characters"
             )
         }
         guard Self.isHexString(nullifier) else {
@@ -1282,9 +1264,9 @@ extension VotingRustBackend {
 
     /// Build the voting PCZT for a bundle.
     public func buildPczt(_ params: VotingBuildPcztParams) throws -> VotingPczt {
-        guard params.seedFingerprint.count == VotingByteCount.seedFingerprint else {
+        guard params.seedFingerprint.count == votingSeedFingerprintByteCount else {
             throw VotingRustBackendError.invalidData(
-                "seedFingerprint must be exactly \(VotingByteCount.seedFingerprint) bytes"
+                "seedFingerprint must be exactly \(votingSeedFingerprintByteCount) bytes"
             )
         }
 
@@ -1403,14 +1385,14 @@ extension VotingRustBackend {
         keystoneSig: [UInt8],
         sighash: [UInt8]
     ) throws -> VotingDelegationSubmission {
-        guard keystoneSig.count == VotingByteCount.keystoneSignature else {
+        guard keystoneSig.count == votingKeystoneSignatureByteCount else {
             throw VotingRustBackendError.invalidData(
-                "keystoneSig must be exactly \(VotingByteCount.keystoneSignature) bytes"
+                "keystoneSig must be exactly \(votingKeystoneSignatureByteCount) bytes"
             )
         }
-        guard sighash.count == VotingByteCount.pcztSighash else {
+        guard sighash.count == votingPcztSighashByteCount else {
             throw VotingRustBackendError.invalidData(
-                "sighash must be exactly \(VotingByteCount.pcztSighash) bytes"
+                "sighash must be exactly \(votingPcztSighashByteCount) bytes"
             )
         }
         let roundIdBytes = [UInt8](roundId.utf8)
@@ -1522,30 +1504,30 @@ extension VotingRustBackend {
     /// well-formed but invalid. Throws `.invalidData` for length mismatches and
     /// `.rustError` if the underlying validation panics.
     public static func validatePirProof(_ proof: VotingPirProof) throws -> Bool {
-        guard proof.root.count == VotingByteCount.pirRoot else {
+        guard proof.root.count == votingPirRootByteCount else {
             throw VotingRustBackendError.invalidData(
-                "root must be exactly \(VotingByteCount.pirRoot) bytes"
+                "root must be exactly \(votingPirRootByteCount) bytes"
             )
         }
-        guard proof.nfBounds.count == VotingByteCount.pirNullifierBounds else {
+        guard proof.nfBounds.count == votingPirNullifierBoundsByteCount else {
             throw VotingRustBackendError.invalidData(
-                "nfBounds must be exactly \(VotingByteCount.pirNullifierBounds) bytes"
+                "nfBounds must be exactly \(votingPirNullifierBoundsByteCount) bytes"
             )
         }
-        let pirPathDescription = "\(VotingByteCount.pirPathElementCount) * \(VotingByteCount.pirRoot)"
-        guard proof.path.count == VotingByteCount.pirPath else {
+        let pirPathDescription = "\(votingPirPathElementCount) * \(votingPirRootByteCount)"
+        guard proof.path.count == votingPirPathByteCount else {
             throw VotingRustBackendError.invalidData(
-                "path must be exactly \(VotingByteCount.pirPath) bytes (\(pirPathDescription))"
+                "path must be exactly \(votingPirPathByteCount) bytes (\(pirPathDescription))"
             )
         }
-        guard proof.nullifier.count == VotingByteCount.pirNullifier else {
+        guard proof.nullifier.count == votingPirNullifierByteCount else {
             throw VotingRustBackendError.invalidData(
-                "nullifier must be exactly \(VotingByteCount.pirNullifier) bytes"
+                "nullifier must be exactly \(votingPirNullifierByteCount) bytes"
             )
         }
-        guard proof.expectedRoot.count == VotingByteCount.pirExpectedRoot else {
+        guard proof.expectedRoot.count == votingPirExpectedRootByteCount else {
             throw VotingRustBackendError.invalidData(
-                "expectedRoot must be exactly \(VotingByteCount.pirExpectedRoot) bytes"
+                "expectedRoot must be exactly \(votingPirExpectedRootByteCount) bytes"
             )
         }
 
