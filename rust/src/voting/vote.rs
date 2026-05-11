@@ -341,6 +341,11 @@ fn require_min_seed_len(bytes: &[u8], name: &str) -> anyhow::Result<()> {
 }
 
 fn require_ascii_hex(value: &str, name: &str) -> anyhow::Result<()> {
+    if value.len() % 2 != 0 {
+        return Err(anyhow!(
+            "{name} must contain an even number of hex characters"
+        ));
+    }
     if !value.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(anyhow!("{name} must contain only ASCII hex characters"));
     }
@@ -789,6 +794,11 @@ mod tests {
             call_sign_cast_vote(round_id_hex, &bytes, &bytes, &bytes, &bytes, &bytes).is_null(),
             "non-hex round_id_hex must be rejected"
         );
+    }
+
+    #[test]
+    fn require_ascii_hex_rejects_odd_length() {
+        assert!(require_ascii_hex("abc", "test_hex").is_err());
     }
 
     #[test]
