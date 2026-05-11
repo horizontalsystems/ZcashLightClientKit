@@ -123,7 +123,7 @@ extension VotingRustBackend {
     /// needed for the delegation ZKP, and cache them in the voting database.
     ///
     /// This performs the network PIR lookup only, proof construction happens
-    //  elsewhere.
+    ///  elsewhere.
     ///
     /// `pirEndpoints` are probed in parallel via `pirResolver`. The first
     /// endpoint whose served snapshot height equals `expectedSnapshotHeight`
