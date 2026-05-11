@@ -6,15 +6,6 @@
 import Foundation
 import libzcashlc
 
-private enum CharacterByte {
-    static let zero: UInt8 = 48
-    static let nine: UInt8 = 57
-    static let uppercaseA: UInt8 = 65
-    static let uppercaseF: UInt8 = 70
-    static let lowercaseA: UInt8 = 97
-    static let lowercaseF: UInt8 = 102
-}
-
 // MARK: - Error
 
 /// Error type for voting Rust backend operations.
@@ -1629,9 +1620,9 @@ private extension VotingRustBackend {
 
     static func isHexString(_ value: String) -> Bool {
         value.utf8.allSatisfy { byte in
-            (byte >= CharacterByte.zero && byte <= CharacterByte.nine)
-                || (byte >= CharacterByte.lowercaseA && byte <= CharacterByte.lowercaseF)
-                || (byte >= CharacterByte.uppercaseA && byte <= CharacterByte.uppercaseF)
+            (byte >= votingCharacterByteZero && byte <= votingCharacterByteNine)
+                || (byte >= votingCharacterByteLowercaseA && byte <= votingCharacterByteLowercaseF)
+                || (byte >= votingCharacterByteUppercaseA && byte <= votingCharacterByteUppercaseF)
         }
     }
 
