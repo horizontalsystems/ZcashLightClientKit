@@ -9,13 +9,12 @@ use zcash_protocol::consensus::{self, Network};
 use zcash_voting as voting;
 use zip32::{AccountId, Scope};
 
+use super::constants::MIN_SEED_LEN;
 use super::ffi_types::FfiVotingHotkey;
 
 // =============================================================================
 // Helper functions
 // =============================================================================
-
-const MIN_SEED_LEN: usize = 32;
 
 /// Borrow a byte slice from a raw `(ptr, len)` pair.
 ///
