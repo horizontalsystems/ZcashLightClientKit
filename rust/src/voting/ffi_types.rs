@@ -1,6 +1,8 @@
 use std::ffi::CString;
 use std::os::raw::c_char;
 
+use zeroize::Zeroize;
+
 // =============================================================================
 // #[repr(C)] structs for simple, frequently-accessed return types
 // =============================================================================
@@ -119,7 +121,7 @@ pub unsafe extern "C" fn zcashlc_voting_free_hotkey(ptr: *mut FfiVotingHotkey) {
     if !ptr.is_null() {
         let s: Box<FfiVotingHotkey> = unsafe { Box::from_raw(ptr) };
         if !s.secret_key.is_null() {
-            crate::free_ptr_from_vec(s.secret_key, s.secret_key_len);
+            zeroize_free_u8(s.secret_key, s.secret_key_len);
         }
         if !s.public_key.is_null() {
             crate::free_ptr_from_vec(s.public_key, s.public_key_len);
@@ -129,6 +131,19 @@ pub unsafe extern "C" fn zcashlc_voting_free_hotkey(ptr: *mut FfiVotingHotkey) {
         }
         drop(s);
     }
+}
+
+/// Zeroize and free a `*mut u8` slice.
+///
+/// # Safety
+///
+/// - `ptr` must be non-null and must point to a slice of `u8` values.
+/// - `len` must be the length of the slice.
+/// - The memory referenced by `ptr` must not be mutated for the duration of the call.
+fn zeroize_free_u8(ptr: *mut u8, len: usize) {
+    let mut s = unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)) };
+    s.zeroize();
+    drop(s);
 }
 
 /// Free an `FfiBundleSetupResult` value.

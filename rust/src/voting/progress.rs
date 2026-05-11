@@ -1,3 +1,5 @@
+use std::panic::{AssertUnwindSafe, catch_unwind};
+
 use zcash_voting as voting;
 
 /// C function pointer type for proof progress reporting.
@@ -17,6 +19,10 @@ unsafe impl Sync for ProgressBridge {}
 
 impl voting::ProofProgressReporter for ProgressBridge {
     fn on_progress(&self, progress: f64) {
-        unsafe { (self.callback)(progress, self.context) }
+        // Progress reporting is best-effort; do not let callback panics unwind
+        // through zcash_voting or across the FFI boundary.
+        let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
+            (self.callback)(progress, self.context)
+        }));
     }
 }

@@ -6,8 +6,9 @@ use zcash_voting as voting;
 
 use crate::{unwrap_exc_or, unwrap_exc_or_null};
 
+use super::constants::MIN_SEED_LEN;
 use super::db::VotingDatabaseHandle;
-use super::helpers::{MIN_SEED_LEN, bytes_from_ptr, json_to_boxed_slice, str_from_ptr};
+use super::helpers::{bytes_from_ptr, json_to_boxed_slice, str_from_ptr};
 use super::json::{
     JsonCastVoteSignature, JsonSharePayload, JsonVoteCommitmentBundle, JsonWireEncryptedShare,
 };

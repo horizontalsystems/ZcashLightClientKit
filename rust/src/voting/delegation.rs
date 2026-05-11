@@ -12,6 +12,7 @@ use zcash_voting::{self as voting, zkp1};
 
 use crate::{unwrap_exc_or, unwrap_exc_or_null};
 
+use super::constants::SEED_FINGERPRINT_LEN;
 use super::db::VotingDatabaseHandle;
 use super::ffi_types::{FfiBundleSetupResult, FfiVotingHotkey};
 use super::helpers::{
@@ -22,8 +23,6 @@ use super::json::{
     JsonNoteInfo, JsonVotingPczt, JsonWitnessData,
 };
 use super::progress::ProgressBridge;
-
-const SEED_FINGERPRINT_LEN: usize = 32;
 
 /// Validate that a cached lightwalletd `TreeState` is anchored to the voting
 /// round it will be used for.
