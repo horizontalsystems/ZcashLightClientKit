@@ -351,8 +351,18 @@ fn require_ascii_hex(value: &str, name: &str) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    use crate::ffi::zcashlc_free_boxed_slice;
     use crate::voting::db::zcashlc_voting_db_free;
-    use crate::voting::test_helpers::open_memory_db;
+    use crate::voting::test_helpers::{insert_round_and_bundle, open_memory_db};
+    use serde::de::DeserializeOwned;
+
+    fn decode_boxed_json<T: DeserializeOwned>(ptr: *mut crate::ffi::BoxedSlice) -> T {
+        assert!(!ptr.is_null());
+        let json = unsafe { (*ptr).as_slice() }.to_vec();
+        let value = serde_json::from_slice(&json).expect("decode boxed JSON");
+        unsafe { zcashlc_free_boxed_slice(ptr) };
+        value
+    }
 
     #[test]
     fn vote_database_ffi_rejects_null_db() {
@@ -506,6 +516,30 @@ mod tests {
     }
 
     #[test]
+    fn mark_vote_submitted_marks_existing_vote_row() {
+        let db = open_memory_db();
+        let round = b"round";
+        insert_round_and_bundle(db, "round");
+        let handle = unsafe { db.as_ref() }.expect("voting db handle");
+        handle
+            .db
+            .insert_vote_fixture("round", 0, 1, 2, &[0xaa; 32])
+            .expect("insert vote");
+
+        let result =
+            unsafe { zcashlc_voting_mark_vote_submitted(db, round.as_ptr(), round.len(), 0, 1) };
+        let votes = handle.db.get_votes("round").expect("get votes");
+
+        unsafe { zcashlc_voting_db_free(db) };
+        assert_eq!(result, 0);
+        assert_eq!(votes.len(), 1);
+        assert_eq!(votes[0].bundle_index, 0);
+        assert_eq!(votes[0].proposal_id, 1);
+        assert_eq!(votes[0].choice, 2);
+        assert!(votes[0].submitted);
+    }
+
+    #[test]
     fn build_vote_commitment_rejects_wrong_sized_auth_path_sibling() {
         let db = open_memory_db();
         let round = b"round";
@@ -636,6 +670,17 @@ mod tests {
     }
 
     #[test]
+    fn sign_cast_vote_returns_signature_for_valid_inputs() {
+        let round_id_hex = b"0000000000000000000000000000000000000000000000000000000000000000";
+        let bytes = [0u8; CANONICAL_FIELD_LEN];
+
+        let result = call_sign_cast_vote(round_id_hex, &bytes, &bytes, &bytes, &bytes, &bytes);
+        let signature: JsonCastVoteSignature = decode_boxed_json(result);
+
+        assert_eq!(signature.vote_auth_sig.len(), 64);
+    }
+
+    #[test]
     fn sign_cast_vote_rejects_short_canonical_fields() {
         let round_id_hex = b"0000000000000000000000000000000000000000000000000000000000000000";
         let bytes = [0u8; CANONICAL_FIELD_LEN];
@@ -728,5 +773,53 @@ mod tests {
 
         unsafe { zcashlc_voting_db_free(db) };
         assert!(result.is_null());
+    }
+
+    #[test]
+    fn build_share_payloads_returns_payloads_for_bound_shares() {
+        let db = open_memory_db();
+        let commitment = JsonVoteCommitmentBundle {
+            van_nullifier: vec![0u8; 32],
+            vote_authority_note_new: vec![1u8; 32],
+            vote_commitment: vec![2u8; 32],
+            proposal_id: 1,
+            proof: vec![3u8; 32],
+            enc_shares: vec![
+                JsonWireEncryptedShare {
+                    c1: vec![0xc1; 32],
+                    c2: vec![0xc2; 32],
+                    share_index: 0,
+                },
+                JsonWireEncryptedShare {
+                    c1: vec![0xd1; 32],
+                    c2: vec![0xd2; 32],
+                    share_index: 1,
+                },
+            ],
+            anchor_height: 10,
+            vote_round_id: "round".to_string(),
+            shares_hash: vec![4u8; 32],
+            share_blinds: vec![vec![5u8; 32], vec![6u8; 32]],
+            share_comms: vec![vec![7u8; 32], vec![8u8; 32]],
+            r_vpk_bytes: vec![9u8; 32],
+            alpha_v: vec![10u8; 32],
+        };
+        let json = serde_json::to_vec(&commitment).expect("serialize commitment");
+
+        let result = unsafe {
+            zcashlc_voting_build_share_payloads(db, json.as_ptr(), json.len(), 1, 2, 42, 0)
+        };
+        let payloads: Vec<JsonSharePayload> = decode_boxed_json(result);
+
+        unsafe { zcashlc_voting_db_free(db) };
+        assert_eq!(payloads.len(), 2);
+        assert_eq!(payloads[0].proposal_id, 1);
+        assert_eq!(payloads[0].vote_decision, 1);
+        assert_eq!(payloads[0].tree_position, 42);
+        assert_eq!(payloads[0].enc_share.share_index, 0);
+        assert_eq!(payloads[1].enc_share.share_index, 1);
+        assert_eq!(payloads[0].all_enc_shares.len(), 2);
+        assert_eq!(payloads[0].primary_blind, vec![5u8; 32]);
+        assert_eq!(payloads[1].primary_blind, vec![6u8; 32]);
     }
 }
