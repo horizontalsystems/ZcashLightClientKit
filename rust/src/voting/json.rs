@@ -278,24 +278,27 @@ impl From<voting::VoteCommitmentBundle> for JsonVoteCommitmentBundle {
     }
 }
 
-impl From<JsonVoteCommitmentBundle> for voting::VoteCommitmentBundle {
-    fn from(b: JsonVoteCommitmentBundle) -> Self {
-        Self {
-            van_nullifier: b.van_nullifier,
-            vote_authority_note_new: b.vote_authority_note_new,
-            vote_commitment: b.vote_commitment,
-            proposal_id: b.proposal_id,
-            proof: b.proof,
-            // The JSON only carries wire-safe encrypted shares. The core
-            // commitment cannot reconstruct the secret share fields from them.
+impl JsonVoteCommitmentBundle {
+    /// Rebuild the core commitment fields that are safe to carry in JSON.
+    ///
+    /// `enc_shares` is intentionally left empty because the JSON form only
+    /// carries wire-safe encrypted share fields, not the secret client-side
+    /// fields present in `voting::EncryptedShare`.
+    pub(super) fn into_core_without_encrypted_shares(self) -> voting::VoteCommitmentBundle {
+        voting::VoteCommitmentBundle {
+            van_nullifier: self.van_nullifier,
+            vote_authority_note_new: self.vote_authority_note_new,
+            vote_commitment: self.vote_commitment,
+            proposal_id: self.proposal_id,
+            proof: self.proof,
             enc_shares: Vec::new(),
-            anchor_height: b.anchor_height,
-            vote_round_id: b.vote_round_id,
-            shares_hash: b.shares_hash,
-            share_blinds: b.share_blinds,
-            share_comms: b.share_comms,
-            r_vpk_bytes: b.r_vpk_bytes,
-            alpha_v: b.alpha_v,
+            anchor_height: self.anchor_height,
+            vote_round_id: self.vote_round_id,
+            shares_hash: self.shares_hash,
+            share_blinds: self.share_blinds,
+            share_comms: self.share_comms,
+            r_vpk_bytes: self.r_vpk_bytes,
+            alpha_v: self.alpha_v,
         }
     }
 }

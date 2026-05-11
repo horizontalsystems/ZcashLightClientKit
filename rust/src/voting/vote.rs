@@ -184,7 +184,7 @@ pub unsafe extern "C" fn zcashlc_voting_build_share_payloads(
             .cloned()
             .map(Into::into)
             .collect();
-        let core_commitment: voting::VoteCommitmentBundle = json_commitment.into();
+        let core_commitment = json_commitment.into_core_without_encrypted_shares();
 
         let payloads = handle
             .db
