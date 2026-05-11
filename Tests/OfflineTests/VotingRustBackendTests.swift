@@ -1106,6 +1106,9 @@ final class VotingRustBackendTests: XCTestCase {
         )
     }
 
+    // TODO: Consider replacing this raw SQLite insertion with a proper Rust-side test helper
+    // so we don't reach into the Rust-managed votes table directly.
+    // https://github.com/zcash/zcash-swift-wallet-sdk/pull/1724#discussion_r3222196789
     private func insertVoteRow(
         roundId: String,
         walletId: String,
