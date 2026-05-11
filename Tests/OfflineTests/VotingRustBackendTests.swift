@@ -7,40 +7,39 @@ import XCTest
 import SQLite3
 @testable import ZcashLightClientKit
 
+// Shared fixtures for tests that round-trip persisted voting recovery state
+// through the Rust voting database.
+private let roundTripWalletId = "test-wallet"
+private let roundTripRoundId = "round"
+private let roundTripBundleIndex: UInt32 = 0
+private let roundTripProposalId: UInt32 = 1
+private let roundTripShareIndex0: UInt32 = 0
+private let roundTripShareIndex1: UInt32 = 1
+private let roundTripSnapshotHeight: UInt64 = 1
+private let roundTripVoteCommitmentTreePosition: UInt64 = 42
+private let roundTripDelegationTxHash = "delegation-tx-hash"
+private let roundTripVoteTxHash = "vote-tx-hash"
+private let roundTripCommitmentBundleJson = #"{"vote_commitment":[1,2,3],"proposal_id":1}"#
+private let roundTripHelperAURL = "https://helper-a.example"
+private let roundTripHelperBURL = "https://helper-b.example"
+private let roundTripFirstSubmitAt: UInt64 = 1000
+private let roundTripSecondSubmitAt: UInt64 = 2000
+private let roundTripCreatedAt: Int64 = 1_000
+private let roundTripFieldElementByteCount = 32
+private let roundTripKeystoneSignatureByteCount = 64
+private let roundTripDiversifierByteCount = 11
+private let roundTripEligibleNoteValue: UInt64 = 13_000_000
+private let roundTripSQLiteSuccessCode = SQLITE_OK
+private let roundTripSQLiteDoneCode = SQLITE_DONE
+private let roundTripRoundParameter = [UInt8](repeating: 0x07, count: roundTripFieldElementByteCount)
+private let roundTripKeystoneSignature = [UInt8](repeating: 0x01, count: roundTripKeystoneSignatureByteCount)
+private let roundTripPcztSighash = [UInt8](repeating: 0x02, count: roundTripFieldElementByteCount)
+private let roundTripRandomizedKey = [UInt8](repeating: 0x03, count: roundTripFieldElementByteCount)
+private let roundTripShareNullifier = String(repeating: "dd", count: roundTripFieldElementByteCount)
+private let roundTripVoteCommitment = [UInt8](repeating: 0xAA, count: roundTripFieldElementByteCount)
+
 final class VotingRustBackendTests: XCTestCase {
     private var dbPath: String?
-
-    private enum RoundTripFixture {
-        static let walletId = "test-wallet"
-        static let roundId = "round"
-        static let bundleIndex: UInt32 = 0
-        static let proposalId: UInt32 = 1
-        static let shareIndex0: UInt32 = 0
-        static let shareIndex1: UInt32 = 1
-        static let snapshotHeight: UInt64 = 1
-        static let voteCommitmentTreePosition: UInt64 = 42
-        static let delegationTxHash = "delegation-tx-hash"
-        static let voteTxHash = "vote-tx-hash"
-        static let commitmentBundleJson = #"{"vote_commitment":[1,2,3],"proposal_id":1}"#
-        static let helperAURL = "https://helper-a.example"
-        static let helperBURL = "https://helper-b.example"
-        static let firstSubmitAt: UInt64 = 1000
-        static let secondSubmitAt: UInt64 = 2000
-        static let createdAt: Int64 = 1_000
-        static let fieldElementByteCount = 32
-        static let keystoneSignatureByteCount = 64
-        static let diversifierByteCount = 11
-        static let eligibleNoteValue: UInt64 = 13_000_000
-        static let sqliteSuccessCode = SQLITE_OK
-        static let sqliteDoneCode = SQLITE_DONE
-
-        static let roundParameter = [UInt8](repeating: 0x07, count: fieldElementByteCount)
-        static let keystoneSignature = [UInt8](repeating: 0x01, count: keystoneSignatureByteCount)
-        static let pcztSighash = [UInt8](repeating: 0x02, count: fieldElementByteCount)
-        static let randomizedKey = [UInt8](repeating: 0x03, count: fieldElementByteCount)
-        static let shareNullifier = String(repeating: "dd", count: fieldElementByteCount)
-        static let voteCommitment = [UInt8](repeating: 0xAA, count: fieldElementByteCount)
-    }
 
     override func tearDown() {
         if let dbPath {
@@ -499,27 +498,27 @@ final class VotingRustBackendTests: XCTestCase {
         let backend = try makeReadyBackend()
         defer { backend.close() }
 
-        try createRoundWithBundle(backend, roundId: RoundTripFixture.roundId)
+        try createRoundWithBundle(backend, roundId: roundTripRoundId)
 
         XCTAssertNil(
             try backend.getDelegationTxHash(
-                roundId: RoundTripFixture.roundId,
-                bundleIndex: RoundTripFixture.bundleIndex
+                roundId: roundTripRoundId,
+                bundleIndex: roundTripBundleIndex
             )
         )
 
         try backend.storeDelegationTxHash(
-            roundId: RoundTripFixture.roundId,
-            bundleIndex: RoundTripFixture.bundleIndex,
-            txHash: RoundTripFixture.delegationTxHash
+            roundId: roundTripRoundId,
+            bundleIndex: roundTripBundleIndex,
+            txHash: roundTripDelegationTxHash
         )
 
         XCTAssertEqual(
             try backend.getDelegationTxHash(
-                roundId: RoundTripFixture.roundId,
-                bundleIndex: RoundTripFixture.bundleIndex
+                roundId: roundTripRoundId,
+                bundleIndex: roundTripBundleIndex
             ),
-            RoundTripFixture.delegationTxHash
+            roundTripDelegationTxHash
         )
     }
 
@@ -538,103 +537,103 @@ final class VotingRustBackendTests: XCTestCase {
     }
 
     func test_voteTxHash_roundTrips() throws {
-        let backend = try makeReadyBackend(walletId: RoundTripFixture.walletId)
+        let backend = try makeReadyBackend(walletId: roundTripWalletId)
         defer { backend.close() }
 
-        try createRoundWithBundle(backend, roundId: RoundTripFixture.roundId)
+        try createRoundWithBundle(backend, roundId: roundTripRoundId)
         try insertVoteRow(
-            roundId: RoundTripFixture.roundId,
-            walletId: RoundTripFixture.walletId,
-            bundleIndex: RoundTripFixture.bundleIndex,
-            proposalId: RoundTripFixture.proposalId
+            roundId: roundTripRoundId,
+            walletId: roundTripWalletId,
+            bundleIndex: roundTripBundleIndex,
+            proposalId: roundTripProposalId
         )
 
         XCTAssertNil(
             try backend.getVoteTxHash(
-                roundId: RoundTripFixture.roundId,
-                bundleIndex: RoundTripFixture.bundleIndex,
-                proposalId: RoundTripFixture.proposalId
+                roundId: roundTripRoundId,
+                bundleIndex: roundTripBundleIndex,
+                proposalId: roundTripProposalId
             )
         )
 
         try backend.storeVoteTxHash(
-            roundId: RoundTripFixture.roundId,
-            bundleIndex: RoundTripFixture.bundleIndex,
-            proposalId: RoundTripFixture.proposalId,
-            txHash: RoundTripFixture.voteTxHash
+            roundId: roundTripRoundId,
+            bundleIndex: roundTripBundleIndex,
+            proposalId: roundTripProposalId,
+            txHash: roundTripVoteTxHash
         )
 
         XCTAssertEqual(
             try backend.getVoteTxHash(
-                roundId: RoundTripFixture.roundId,
-                bundleIndex: RoundTripFixture.bundleIndex,
-                proposalId: RoundTripFixture.proposalId
+                roundId: roundTripRoundId,
+                bundleIndex: roundTripBundleIndex,
+                proposalId: roundTripProposalId
             ),
-            RoundTripFixture.voteTxHash
+            roundTripVoteTxHash
         )
     }
 
     func test_commitmentBundle_roundTrips() throws {
-        let backend = try makeReadyBackend(walletId: RoundTripFixture.walletId)
+        let backend = try makeReadyBackend(walletId: roundTripWalletId)
         defer { backend.close() }
 
-        try createRoundWithBundle(backend, roundId: RoundTripFixture.roundId)
+        try createRoundWithBundle(backend, roundId: roundTripRoundId)
         try insertVoteRow(
-            roundId: RoundTripFixture.roundId,
-            walletId: RoundTripFixture.walletId,
-            bundleIndex: RoundTripFixture.bundleIndex,
-            proposalId: RoundTripFixture.proposalId
+            roundId: roundTripRoundId,
+            walletId: roundTripWalletId,
+            bundleIndex: roundTripBundleIndex,
+            proposalId: roundTripProposalId
         )
 
         XCTAssertNil(
             try backend.getCommitmentBundle(
-                roundId: RoundTripFixture.roundId,
-                bundleIndex: RoundTripFixture.bundleIndex,
-                proposalId: RoundTripFixture.proposalId
+                roundId: roundTripRoundId,
+                bundleIndex: roundTripBundleIndex,
+                proposalId: roundTripProposalId
             )
         )
 
         try backend.storeCommitmentBundle(
-            roundId: RoundTripFixture.roundId,
-            bundleIndex: RoundTripFixture.bundleIndex,
-            proposalId: RoundTripFixture.proposalId,
-            bundleJson: RoundTripFixture.commitmentBundleJson,
-            voteCommitmentTreePosition: RoundTripFixture.voteCommitmentTreePosition
+            roundId: roundTripRoundId,
+            bundleIndex: roundTripBundleIndex,
+            proposalId: roundTripProposalId,
+            bundleJson: roundTripCommitmentBundleJson,
+            voteCommitmentTreePosition: roundTripVoteCommitmentTreePosition
         )
 
         let stored = try XCTUnwrap(
             backend.getCommitmentBundle(
-                roundId: RoundTripFixture.roundId,
-                bundleIndex: RoundTripFixture.bundleIndex,
-                proposalId: RoundTripFixture.proposalId
+                roundId: roundTripRoundId,
+                bundleIndex: roundTripBundleIndex,
+                proposalId: roundTripProposalId
             )
         )
-        XCTAssertEqual(stored.bundleJson, RoundTripFixture.commitmentBundleJson)
-        XCTAssertEqual(stored.voteCommitmentTreePosition, RoundTripFixture.voteCommitmentTreePosition)
+        XCTAssertEqual(stored.bundleJson, roundTripCommitmentBundleJson)
+        XCTAssertEqual(stored.voteCommitmentTreePosition, roundTripVoteCommitmentTreePosition)
     }
 
     func test_keystoneSignature_roundTrips() throws {
         let backend = try makeReadyBackend()
         defer { backend.close() }
 
-        try createRoundWithBundle(backend, roundId: RoundTripFixture.roundId)
+        try createRoundWithBundle(backend, roundId: roundTripRoundId)
 
         try backend.storeKeystoneSignature(
-            roundId: RoundTripFixture.roundId,
-            bundleIndex: RoundTripFixture.bundleIndex,
-            sig: RoundTripFixture.keystoneSignature,
-            sighash: RoundTripFixture.pcztSighash,
-            randomizedKey: RoundTripFixture.randomizedKey
+            roundId: roundTripRoundId,
+            bundleIndex: roundTripBundleIndex,
+            sig: roundTripKeystoneSignature,
+            sighash: roundTripPcztSighash,
+            randomizedKey: roundTripRandomizedKey
         )
 
         XCTAssertEqual(
-            try backend.getKeystoneSignatures(roundId: RoundTripFixture.roundId),
+            try backend.getKeystoneSignatures(roundId: roundTripRoundId),
             [
                 VotingKeystoneSignatureRecord(
-                    bundleIndex: RoundTripFixture.bundleIndex,
-                    sig: RoundTripFixture.keystoneSignature,
-                    sighash: RoundTripFixture.pcztSighash,
-                    randomizedKey: RoundTripFixture.randomizedKey
+                    bundleIndex: roundTripBundleIndex,
+                    sig: roundTripKeystoneSignature,
+                    sighash: roundTripPcztSighash,
+                    randomizedKey: roundTripRandomizedKey
                 )
             ]
         )
@@ -708,57 +707,57 @@ final class VotingRustBackendTests: XCTestCase {
         let backend = try makeReadyBackend()
         defer { backend.close() }
 
-        try createRoundWithBundle(backend, roundId: RoundTripFixture.roundId)
+        try createRoundWithBundle(backend, roundId: roundTripRoundId)
 
         try backend.recordShareDelegation(
-            roundId: RoundTripFixture.roundId,
-            bundleIndex: RoundTripFixture.bundleIndex,
-            proposalId: RoundTripFixture.proposalId,
-            shareIndex: RoundTripFixture.shareIndex0,
-            sentToURLs: [RoundTripFixture.helperAURL],
-            nullifier: RoundTripFixture.shareNullifier,
-            submitAt: RoundTripFixture.firstSubmitAt
+            roundId: roundTripRoundId,
+            bundleIndex: roundTripBundleIndex,
+            proposalId: roundTripProposalId,
+            shareIndex: roundTripShareIndex0,
+            sentToURLs: [roundTripHelperAURL],
+            nullifier: roundTripShareNullifier,
+            submitAt: roundTripFirstSubmitAt
         )
         try backend.recordShareDelegation(
-            roundId: RoundTripFixture.roundId,
-            bundleIndex: RoundTripFixture.bundleIndex,
-            proposalId: RoundTripFixture.proposalId,
-            shareIndex: RoundTripFixture.shareIndex1,
-            sentToURLs: [RoundTripFixture.helperBURL],
-            nullifier: RoundTripFixture.shareNullifier,
-            submitAt: RoundTripFixture.secondSubmitAt
+            roundId: roundTripRoundId,
+            bundleIndex: roundTripBundleIndex,
+            proposalId: roundTripProposalId,
+            shareIndex: roundTripShareIndex1,
+            sentToURLs: [roundTripHelperBURL],
+            nullifier: roundTripShareNullifier,
+            submitAt: roundTripSecondSubmitAt
         )
 
-        let all = try backend.getShareDelegations(roundId: RoundTripFixture.roundId)
+        let all = try backend.getShareDelegations(roundId: roundTripRoundId)
         XCTAssertEqual(all.count, 2)
 
-        let share0 = try XCTUnwrap(all.first { $0.shareIndex == RoundTripFixture.shareIndex0 })
-        XCTAssertEqual(share0.roundId, RoundTripFixture.roundId)
-        XCTAssertEqual(share0.bundleIndex, RoundTripFixture.bundleIndex)
-        XCTAssertEqual(share0.proposalId, RoundTripFixture.proposalId)
-        XCTAssertEqual(share0.sentToURLs, [RoundTripFixture.helperAURL])
-        XCTAssertEqual(share0.nullifier, RoundTripFixture.shareNullifier)
+        let share0 = try XCTUnwrap(all.first { $0.shareIndex == roundTripShareIndex0 })
+        XCTAssertEqual(share0.roundId, roundTripRoundId)
+        XCTAssertEqual(share0.bundleIndex, roundTripBundleIndex)
+        XCTAssertEqual(share0.proposalId, roundTripProposalId)
+        XCTAssertEqual(share0.sentToURLs, [roundTripHelperAURL])
+        XCTAssertEqual(share0.nullifier, roundTripShareNullifier)
         XCTAssertFalse(share0.confirmed)
-        XCTAssertEqual(share0.submitAt, RoundTripFixture.firstSubmitAt)
+        XCTAssertEqual(share0.submitAt, roundTripFirstSubmitAt)
 
-        XCTAssertEqual(try backend.getUnconfirmedDelegations(roundId: RoundTripFixture.roundId).count, 2)
+        XCTAssertEqual(try backend.getUnconfirmedDelegations(roundId: roundTripRoundId).count, 2)
 
         try backend.markShareConfirmed(
-            roundId: RoundTripFixture.roundId,
-            bundleIndex: RoundTripFixture.bundleIndex,
-            proposalId: RoundTripFixture.proposalId,
-            shareIndex: RoundTripFixture.shareIndex0
+            roundId: roundTripRoundId,
+            bundleIndex: roundTripBundleIndex,
+            proposalId: roundTripProposalId,
+            shareIndex: roundTripShareIndex0
         )
 
         let confirmedShare = try XCTUnwrap(
-            backend.getShareDelegations(roundId: RoundTripFixture.roundId)
-                .first { $0.shareIndex == RoundTripFixture.shareIndex0 }
+            backend.getShareDelegations(roundId: roundTripRoundId)
+                .first { $0.shareIndex == roundTripShareIndex0 }
         )
         XCTAssertTrue(confirmedShare.confirmed)
 
-        let unconfirmed = try backend.getUnconfirmedDelegations(roundId: RoundTripFixture.roundId)
+        let unconfirmed = try backend.getUnconfirmedDelegations(roundId: roundTripRoundId)
         XCTAssertEqual(unconfirmed.count, 1)
-        XCTAssertEqual(unconfirmed[0].shareIndex, RoundTripFixture.shareIndex1)
+        XCTAssertEqual(unconfirmed[0].shareIndex, roundTripShareIndex1)
     }
 
     func test_recordShareDelegation_rejectsInvalidNullifierLength() throws {
@@ -1067,7 +1066,7 @@ final class VotingRustBackendTests: XCTestCase {
         return path
     }
 
-    private func makeReadyBackend(walletId: String = RoundTripFixture.walletId) throws -> VotingRustBackend {
+    private func makeReadyBackend(walletId: String = roundTripWalletId) throws -> VotingRustBackend {
         let backend = VotingRustBackend()
         try backend.open(path: makeTempDbPath())
         try backend.setWalletId(walletId)
@@ -1080,10 +1079,10 @@ final class VotingRustBackendTests: XCTestCase {
     ) throws {
         try backend.initRound(
             roundId: roundId,
-            snapshotHeight: RoundTripFixture.snapshotHeight,
-            eaPublicKey: RoundTripFixture.roundParameter,
-            ncRoot: RoundTripFixture.roundParameter,
-            nullifierImtRoot: RoundTripFixture.roundParameter
+            snapshotHeight: roundTripSnapshotHeight,
+            eaPublicKey: roundTripRoundParameter,
+            ncRoot: roundTripRoundParameter,
+            nullifierImtRoot: roundTripRoundParameter
         )
 
         let result = try backend.setupBundles(
@@ -1095,13 +1094,13 @@ final class VotingRustBackendTests: XCTestCase {
 
     private func makeEligibleNote() -> VotingNoteInfo {
         VotingNoteInfo(
-            commitment: [UInt8](repeating: 0x01, count: RoundTripFixture.fieldElementByteCount),
-            nullifier: [UInt8](repeating: 0x02, count: RoundTripFixture.fieldElementByteCount),
-            value: RoundTripFixture.eligibleNoteValue,
+            commitment: [UInt8](repeating: 0x01, count: roundTripFieldElementByteCount),
+            nullifier: [UInt8](repeating: 0x02, count: roundTripFieldElementByteCount),
+            value: roundTripEligibleNoteValue,
             position: 0,
-            diversifier: [UInt8](repeating: 0, count: RoundTripFixture.diversifierByteCount),
-            rho: [UInt8](repeating: 0, count: RoundTripFixture.fieldElementByteCount),
-            rseed: [UInt8](repeating: 0, count: RoundTripFixture.fieldElementByteCount),
+            diversifier: [UInt8](repeating: 0, count: roundTripDiversifierByteCount),
+            rho: [UInt8](repeating: 0, count: roundTripFieldElementByteCount),
+            rseed: [UInt8](repeating: 0, count: roundTripFieldElementByteCount),
             scope: 0,
             ufvkStr: ""
         )
@@ -1142,7 +1141,7 @@ final class VotingRustBackendTests: XCTestCase {
         defer { sqlite3_finalize(statement) }
 
         let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-        let commitment = RoundTripFixture.voteCommitment
+        let commitment = roundTripVoteCommitment
 
         try roundId.withCString { roundIdPointer in
             try requireSQLite(
@@ -1181,7 +1180,7 @@ final class VotingRustBackendTests: XCTestCase {
             )
         }
         try requireSQLite(
-            sqlite3_bind_int64(statement, 7, sqlite3_int64(RoundTripFixture.createdAt)),
+            sqlite3_bind_int64(statement, 7, sqlite3_int64(roundTripCreatedAt)),
             db,
             message: "bind created_at"
         )
@@ -1189,7 +1188,7 @@ final class VotingRustBackendTests: XCTestCase {
         try requireSQLite(
             sqlite3_step(statement),
             db,
-            expected: RoundTripFixture.sqliteDoneCode,
+            expected: roundTripSQLiteDoneCode,
             message: "insert vote row"
         )
     }
@@ -1197,7 +1196,7 @@ final class VotingRustBackendTests: XCTestCase {
     private func requireSQLite(
         _ code: Int32,
         _ db: OpaquePointer?,
-        expected: Int32 = RoundTripFixture.sqliteSuccessCode,
+        expected: Int32 = roundTripSQLiteSuccessCode,
         message: String
     ) throws {
         guard code == expected else {
