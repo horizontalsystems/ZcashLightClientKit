@@ -35,6 +35,24 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Transport became inactive` connectivity issue.
 - `NIOHTTP2` connectivity issues. 
 
+## Checkpoints
+
+Mainnet
+
+````
+Sources/ZcashLightClientKit/Resources/checkpoints/mainnet/3297500.json
+...
+Sources/ZcashLightClientKit/Resources/checkpoints/mainnet/3337500.json
+````
+
+Testnet
+
+````
+Sources/ZcashLightClientKit/Resources/checkpoints/testnet/3940000.json
+...
+Sources/ZcashLightClientKit/Resources/checkpoints/testnet/4000000.json
+````
+
 # 2.4.9 - 2026-04-04
 
 ## Checkpoints
