@@ -751,11 +751,6 @@ extension VotingRustBackend {
             }
         }
 
-        guard try getDelegationTxHash(roundId: roundId, bundleIndex: bundleIndex) == txHash else {
-            throw VotingRustBackendError.rustError(
-                "delegation tx hash was not persisted for round \(roundId) bundle \(bundleIndex)"
-            )
-        }
     }
 
     /// Load a previously-stored delegation transaction hash, if any.
