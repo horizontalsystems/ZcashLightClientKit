@@ -671,7 +671,7 @@ const PATH_BYTES: usize = NUM_PATH_ELEMENTS * 32;
 /// pallas::Base values for the root and the three nf_bounds, a u32 leaf
 /// position, and 29 32-byte path siblings.
 ///
-/// Returns 0 if the proof is valid, 1 if it is well-formed but invalid, and -1
+/// Returns 1 if the proof is valid, 0 if it is well-formed but invalid, and -1
 /// if inputs are malformed or a panic occurs.
 ///
 /// # Safety
@@ -721,8 +721,8 @@ pub unsafe extern "C" fn zcashlc_voting_validate_pir_proof(
         let expected_root = parse_base(&expected_root_bytes, "expected_root")?;
 
         match zkp1::validate_and_convert_pir_proof(proof, nullifier, expected_root) {
-            Ok(_) => Ok(0),
-            Err(_) => Ok(1),
+            Ok(_) => Ok(1),
+            Err(_) => Ok(0),
         }
     });
     unwrap_exc_or(res, -1)
@@ -1457,7 +1457,7 @@ mod tests {
                 &nullifier,
                 &expected_root
             ),
-            0
+            1
         );
     }
 
@@ -1479,7 +1479,7 @@ mod tests {
                 &nullifier,
                 &expected_root
             ),
-            1
+            0
         );
     }
 
@@ -1501,7 +1501,7 @@ mod tests {
                 &nullifier,
                 &expected_root
             ),
-            1
+            0
         );
     }
 

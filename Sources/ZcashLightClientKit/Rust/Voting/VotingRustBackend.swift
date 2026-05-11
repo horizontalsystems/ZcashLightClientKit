@@ -1537,8 +1537,8 @@ extension VotingRustBackend {
         }
 
         switch result {
-        case 0: return true
-        case 1: return false
+        case 1: return true
+        case 0: return false
         default:
             throw VotingRustBackendError.rustError(
                 staticLastErrorMessage(fallback: "`validate_pir_proof` failed")
