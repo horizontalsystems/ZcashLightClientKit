@@ -344,8 +344,11 @@ extension VotingRustBackend {
     /// Build a vote commitment proof for a proposal.
     ///
     /// The proof callback may be invoked from Rust worker threads. Do not call
-    /// back into this backend from `progress`, because the database handle lock
-    /// is held while the FFI call is active.
+    /// back into this backend from `progress`: the database handle lock is held
+    /// while the FFI call is active, so re-entering the backend will deadlock.
+    ///
+    /// Safety: keep `progress` thread-safe, non-blocking, and limited to
+    /// reporting state outside this backend.
     // swiftlint:disable:next function_parameter_count
     public func buildVoteCommitment(
         roundId: String,
