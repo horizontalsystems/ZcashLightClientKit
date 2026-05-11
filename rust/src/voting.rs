@@ -18,3 +18,4 @@ pub mod share_tracking;
 pub(crate) mod test_helpers;
 pub mod tree;
 pub mod util;
+pub mod vote;
