@@ -1177,7 +1177,7 @@ final class VotingRustBackendTests: XCTestCase {
         }
     }
 
-    func test_voteSubmissionHelpers_afterOpen_buildPayloadsSignAndMarkSubmitted() throws {
+    func test_voteSubmissionHelpers_afterOpen_buildPayloadsAndSignWithSyntheticCommitment() throws {
         let backend = try makeOpenBackend()
         defer { backend.close() }
         let commitment = makeVoteCommitmentBundle(proposalId: 7)
@@ -1213,21 +1213,6 @@ final class VotingRustBackendTests: XCTestCase {
             commitment: commitment
         )
         XCTAssertFalse(signature.voteAuthSig.isEmpty)
-
-        try createRoundWithBundle(backend, roundId: commitment.voteRoundId)
-        try insertVoteRow(
-            roundId: commitment.voteRoundId,
-            walletId: "wallet",
-            bundleIndex: 0,
-            proposalId: commitment.proposalId
-        )
-        XCTAssertNoThrow(
-            try backend.markVoteSubmitted(
-                roundId: commitment.voteRoundId,
-                bundleIndex: 0,
-                proposalId: commitment.proposalId
-            )
-        )
     }
 
     func test_markVoteSubmitted_beforeOpen_throwsDatabaseNotOpen() {
@@ -1242,24 +1227,15 @@ final class VotingRustBackendTests: XCTestCase {
         }
     }
 
-    func test_markVoteSubmitted_afterOpen_marksExistingVote() throws {
+    func test_markVoteSubmitted_afterOpen_missingVote_throwsRustError() throws {
         let backend = try makeOpenBackend()
         defer { backend.close() }
 
-        try createRoundWithBundle(backend, roundId: roundTripRoundId)
-        try insertVoteRow(
-            roundId: roundTripRoundId,
-            walletId: "wallet",
-            bundleIndex: roundTripBundleIndex,
-            proposalId: roundTripProposalId
-        )
-        XCTAssertNoThrow(
-            try backend.markVoteSubmitted(
-                roundId: roundTripRoundId,
-                bundleIndex: roundTripBundleIndex,
-                proposalId: roundTripProposalId
-            )
-        )
+        XCTAssertThrowsError(
+            try backend.markVoteSubmitted(roundId: "missing-round", bundleIndex: 0, proposalId: 0)
+        ) { error in
+            assertNoVoteFound(error)
+        }
     }
 
     func test_signCastVote_invalidCommitment_throwsRustError() {
@@ -1563,6 +1539,18 @@ final class VotingRustBackendTests: XCTestCase {
         try backend.open(path: makeTempDbPath())
         try backend.setWalletId("wallet")
         return backend
+    }
+
+    private func assertNoVoteFound(
+        _ error: Error,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard case VotingRustBackendError.rustError(let message) = error else {
+            XCTFail("expected .rustError, got \(error)", file: file, line: line)
+            return
+        }
+        XCTAssertTrue(message.contains("no vote found"), "unexpected message: \(message)", file: file, line: line)
     }
 
     private func makeVoteCommitmentBundle(
