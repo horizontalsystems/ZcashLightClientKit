@@ -6,6 +6,8 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 2.5.0 - 2026-05-11
+
 ### Added
 - `zcashlc_voting_compute_share_nullifier`: Compute the 32-byte share-reveal
   nullifier from a vote commitment, primary blind, and share index. Returns
