@@ -19,7 +19,9 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Database lifecycle: `init()`, `open(path:)`, `close()` (idempotent), and `deinit` cleanup, over `zcashlc_voting_db_open` / `zcashlc_voting_db_free`.
   - `setWalletId(_:)` over `zcashlc_voting_set_wallet_id`.
   - `precomputeDelegationPir(roundId:bundleIndex:notes:pirEndpoints:expectedSnapshotHeight:networkId:pirResolver:)` over `zcashlc_voting_precompute_delegation_pir`, with `PirSnapshotResolver`-driven endpoint selection.
+  - `generateNoteWitnesses(roundId:bundleIndex:walletDbPath:notes:networkId:)` over `zcashlc_voting_generate_note_witnesses`.
   - Vote-tree sync: `syncVoteTree(roundId:nodeUrl:)`, `generateVanWitness(roundId:bundleIndex:anchorHeight:)`, and `resetTreeClient(roundId:)` over the corresponding `zcashlc_voting_sync_vote_tree` / `_generate_van_witness` / `_reset_tree_client` FFI.
+  - Vote casting: `encryptShares(roundId:shares:)`, `buildVoteCommitment(roundId:bundleIndex:hotkeySeed:networkId:proposalId:choice:numOptions:vanWitness:singleShare:progress:)`, `buildSharePayloads(commitment:voteDecision:numOptions:voteCommitmentTreePosition:singleShare:)`, `markVoteSubmitted(roundId:bundleIndex:proposalId:)`, and `signCastVote(hotkeySeed:networkId:commitment:)`.
   - The static `computeShareNullifier(voteCommitment:shareIndex:primaryBlind:)` over `zcashlc_voting_compute_share_nullifier`, with 32-byte input validation.
   - `VotingRustBackendError` cases `databaseAlreadyOpen` / `databaseNotOpen` for handle-state errors, alongside the existing `rustError` and `invalidData`.
 - Extends `VotingRustBackend` with additional FFI wrappers and their FFI mappings:
