@@ -27,6 +27,12 @@
 # use prepare-release.sh instead and perform steps manually.
 
 set -e
+
+# Ensure Rust toolchain is on PATH (needed when invoked from Xcode build phases)
+if [[ -f "$HOME/.cargo/env" ]]; then
+    source "$HOME/.cargo/env"
+fi
+
 cd "$(dirname "$0")/.."
 
 if [[ -z "$1" ]] || [[ -z "$2" ]]; then

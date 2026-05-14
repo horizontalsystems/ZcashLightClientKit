@@ -128,7 +128,8 @@ public protocol CombineSynchronizer {
         zip32AccountIndex: Zip32AccountIndex?,
         purpose: AccountPurpose,
         name: String,
-        keySource: String?
+        keySource: String?,
+        birthday: BlockHeight?
     ) async throws -> SinglePublisher<AccountUUID, Error>
 
     var allTransactions: SinglePublisher<[ZcashTransaction.Overview], Never> { get }
@@ -152,7 +153,11 @@ public protocol CombineSynchronizer {
     func estimateBirthdayHeight(for date: Date) -> SinglePublisher<BlockHeight, Error>
 
     func httpRequestOverTor(for request: URLRequest, retryLimit: UInt8) -> SinglePublisher<(data: Data, response: HTTPURLResponse), Error>
-    
+
+    var broadcaster: Broadcaster { get }
+
     func rewind(_ policy: RewindPolicy) -> CompletablePublisher<Error>
     func wipe() -> CompletablePublisher<Error>
+    
+    func rescanFrom(height: BlockHeight) -> CompletablePublisher<Error>
 }

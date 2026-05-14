@@ -96,6 +96,10 @@ class RustBackendMockHelper {
             try await rustBackend.rewindToHeight(height: height)
         }
 
+        rustBackendMock.truncateToChainStateChainStateClosure = { chainState in
+            try await rustBackend.truncateToChainState(chainState: chainState)
+        }
+
         rustBackendMock.rewindCacheToHeightHeightClosure = { _ in }
 
         rustBackendMock.suggestScanRangesClosure = {
@@ -148,7 +152,8 @@ extension SynchronizerState {
             syncSessionID: .nullID,
             accountsBalances: [:],
             internalSyncStatus: .syncing(0, false),
-            latestBlockHeight: 222222
+            latestBlockHeight: 222222,
+            fullyScannedHeight: 0
         )
     }
 }

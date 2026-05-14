@@ -134,6 +134,7 @@ public protocol ClosureSynchronizer {
         purpose: AccountPurpose,
         name: String,
         keySource: String?,
+        birthday: BlockHeight?,
         completion: @escaping (Result<AccountUUID, Error>) -> Void
     ) async throws
 
@@ -161,11 +162,15 @@ public protocol ClosureSynchronizer {
     func estimateBirthdayHeight(for date: Date, completion: @escaping (BlockHeight) -> Void)
 
     func httpRequestOverTor(for request: URLRequest, retryLimit: UInt8, completion: @escaping (Result<(data: Data, response: HTTPURLResponse), Error>) -> Void)
-    
+
+    var broadcaster: Broadcaster { get }
+
     /*
      It can be missleading that these two methods are returning Publisher even this protocol is closure based. Reason is that Synchronizer doesn't
      provide different implementations for these two methods. So Combine it is even here.
      */
     func rewind(_ policy: RewindPolicy) -> CompletablePublisher<Error>
     func wipe() -> CompletablePublisher<Error>
+    
+    func rescanFrom(height: BlockHeight, completion: @escaping (Error?) -> Void)
 }

@@ -1,24 +1,5 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
-use anyhow::{Context, anyhow};
-use bitflags::bitflags;
-use ffi_helpers::panic::catch_panic;
-use http_body_util::BodyExt;
-use nonempty::NonEmpty;
-use pczt::{
-    Pczt,
-    roles::{combiner::Combiner, prover::Prover, redactor::Redactor},
-};
-use prost::Message;
-use rand::rngs::OsRng;
-use secrecy::Secret;
-use transparent::{
-    address::TransparentAddress,
-    bundle::{OutPoint, TxOut},
-    keys::TransparentKeyScope,
-};
-use zcash_script::script;
-
 use std::collections::HashSet;
 use std::convert::{Infallible, TryFrom, TryInto};
 use std::error::Error;
@@ -32,47 +13,60 @@ use std::slice;
 use std::time::UNIX_EPOCH;
 use std::{array::TryFromSliceError, time::SystemTime};
 
+use anyhow::{Context, anyhow};
+use bitflags::bitflags;
+use ffi_helpers::panic::catch_panic;
+use http_body_util::BodyExt;
+use nonempty::NonEmpty;
+use pczt::{
+    Pczt,
+    roles::{combiner::Combiner, prover::Prover, redactor::Redactor},
+};
+use prost::Message;
+use rand::rngs::OsRng;
+use secrecy::Secret;
 use tor_rtcompat::ToplevelBlockOn as _;
 use tracing::{debug, metadata::LevelFilter};
 use tracing_subscriber::prelude::*;
 use uuid::Uuid;
-use zcash_client_backend::{
-    data_api::{
-        AccountPurpose, MaxSpendMode, TransactionStatus, Zip32Derivation,
-        wallet::{self, SpendingKeys, extract_and_store_transaction_from_pczt},
-    },
-    fees::{SplitPolicy, StandardFeeRule, zip317::MultiOutputChangeStrategy},
-    keys::{ReceiverRequirement, UnifiedAddressRequest, UnifiedFullViewingKey},
-    tor::http::HttpError,
-    wallet::{Exposure, GapMetadata},
-};
-use zcash_client_sqlite::{error::SqliteClientError, util::SystemClock};
 
+use transparent::{
+    address::TransparentAddress,
+    bundle::{OutPoint, TxOut},
+    keys::TransparentKeyScope,
+};
 use zcash_address::ZcashAddress;
 use zcash_client_backend::{
     address::Address,
     data_api::{
-        Account, AccountBirthday, InputSource, SeedRelevance, TransactionDataRequest,
-        WalletCommitmentTrees, WalletRead, WalletWrite,
+        Account, AccountBirthday, AccountPurpose, InputSource, MaxSpendMode, SeedRelevance,
+        TransactionDataRequest, TransactionStatus, TransparentKeyOrigin, TransparentOutputFilter,
+        WalletCommitmentTrees, WalletRead, WalletWrite, Zip32Derivation,
         chain::{CommitmentTreeRoot, scan_cached_blocks},
         scanning::ScanPriority,
         wallet::{
-            create_pczt_from_proposal, create_proposed_transactions, decrypt_and_store_transaction,
+            self, SpendingKeys, create_pczt_from_proposal, create_proposed_transactions,
+            decrypt_and_store_transaction, extract_and_store_transaction_from_pczt,
             input_selection::GreedyInputSelector, propose_send_max_transfer, propose_shielding,
             propose_transfer,
         },
     },
     encoding::AddressCodec,
-    fees::DustOutputPolicy,
-    keys::{DecodingError, Era, UnifiedSpendingKey},
+    fees::{DustOutputPolicy, SplitPolicy, StandardFeeRule, zip317::MultiOutputChangeStrategy},
+    keys::{
+        DecodingError, Era, ReceiverRequirement, ReceiverRequirementError, UnifiedAddressRequest,
+        UnifiedFullViewingKey, UnifiedSpendingKey,
+    },
     proto::{proposal::Proposal, service::TreeState},
-    tor::http::cryptex,
-    wallet::{NoteId, OvkPolicy, WalletTransparentOutput},
+    tor::http::{HttpError, cryptex},
+    wallet::{Exposure, GapMetadata, NoteId, OvkPolicy, WalletTransparentOutput},
     zip321::{Payment, TransactionRequest},
 };
 use zcash_client_sqlite::{
     AccountUuid, FsBlockDb, WalletDb,
     chain::{BlockMeta, init::init_blockmeta_db},
+    error::SqliteClientError,
+    util::SystemClock,
     wallet::init::{WalletMigrationError, init_wallet_db},
 };
 use zcash_primitives::{
@@ -90,11 +84,14 @@ use zcash_protocol::{
     memo::MemoBytes,
     value::{ZatBalance, Zatoshis},
 };
+use zcash_script::script;
 use zip32::fingerprint::SeedFingerprint;
 
 mod derivation;
+mod eip681;
 mod ffi;
 mod tor;
+mod voting;
 
 #[cfg(target_vendor = "apple")]
 mod os_log;
@@ -854,7 +851,7 @@ bitflags! {
 }
 
 impl ReceiverFlags {
-    fn to_address_request(self) -> Result<UnifiedAddressRequest, ()> {
+    fn to_address_request(self) -> Result<UnifiedAddressRequest, ReceiverRequirementError> {
         UnifiedAddressRequest::custom(
             if self.contains(ReceiverFlags::ORCHARD) {
                 ReceiverRequirement::Require
@@ -916,10 +913,11 @@ pub unsafe extern "C" fn zcashlc_get_next_available_address(
         let account_uuid = account_uuid_from_bytes(account_uuid_bytes)?;
         let receiver_flags = ReceiverFlags::from_bits(receiver_flags)
             .ok_or_else(|| anyhow!("Invalid unified address receiver flags {}", receiver_flags))?;
-        let address_request = receiver_flags.to_address_request().map_err(|_| {
+        let address_request = receiver_flags.to_address_request().map_err(|e| {
             anyhow!(
-                "Could not generate a valid unified address for flags {}",
-                receiver_flags.bits()
+                "Could not generate a valid unified address for flags {}: {}",
+                receiver_flags.bits(),
+                e
             )
         })?;
 
@@ -1019,7 +1017,12 @@ pub unsafe extern "C" fn zcashlc_get_verified_transparent_balance(
             .map_err(|e| anyhow!("Error while fetching target height: {}", e))?
             .context("Target height not available; scan required.")?;
         let utxos = db_data
-            .get_spendable_transparent_outputs(&taddr, target, confirmations_policy)
+            .get_spendable_transparent_outputs(
+                &taddr,
+                target,
+                confirmations_policy,
+                TransparentOutputFilter::All,
+            )
             .map_err(|e| anyhow!("Error while fetching verified transparent balance: {}", e))?;
         let amount = utxos
             .iter()
@@ -1078,7 +1081,12 @@ pub unsafe extern "C" fn zcashlc_get_verified_transparent_balance_for_account(
             .keys()
             .map(|taddr| {
                 db_data
-                    .get_spendable_transparent_outputs(taddr, target, confirmations_policy)
+                    .get_spendable_transparent_outputs(
+                        taddr,
+                        target,
+                        confirmations_policy,
+                        TransparentOutputFilter::All,
+                    )
                     .map_err(|e| {
                         anyhow!("Error while fetching verified transparent balance: {}", e)
                     })
@@ -1128,6 +1136,7 @@ pub unsafe extern "C" fn zcashlc_get_total_transparent_balance(
                 &taddr,
                 target,
                 wallet::ConfirmationsPolicy::new_symmetrical(NonZeroU32::MIN, true),
+                TransparentOutputFilter::All,
             )
             .map_err(|e| anyhow!("Error while fetching total transparent balance: {}", e))?
             .iter()
@@ -1322,7 +1331,7 @@ pub unsafe extern "C" fn zcashlc_rewind_to_height(
         let mut db_data = unsafe { wallet_db(db_data, db_data_len, network)? };
 
         let height = BlockHeight::from(height);
-        let result_height = db_data.truncate_to_height(height);
+        let result_height = db_data.rewind_to_height(height);
 
         result_height.map_or_else(
             |err| match err {
@@ -1343,6 +1352,57 @@ pub unsafe extern "C" fn zcashlc_rewind_to_height(
         )
     });
     unwrap_exc_or(res, -1)
+}
+
+/// Truncates the data database to the specified chain state.
+///
+/// In contrast to [`zcashlc_rewind_to_height`], this function allows the caller to truncate the
+/// wallet database to a precise height by providing additional chain state information needed for
+/// note commitment tree maintenance after the truncation.
+///
+/// The `chain_state` parameter is a protobuf-encoded `TreeState` value representing the chain
+/// state at the height to which the database should be truncated.
+///
+/// Returns `true` if the truncation succeeded, or `false` if an error occurred. When `false` is
+/// returned, the caller should check for errors.
+///
+/// # Safety
+///
+/// - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
+///   alignment of `1`. Its contents must be a string representing a valid system path in the
+///   operating system's preferred representation.
+/// - The memory referenced by `db_data` must not be mutated for the duration of the function call.
+/// - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
+///   documentation of pointer::offset.
+/// - `chain_state` must be non-null and valid for reads for `chain_state_len` bytes, and it must
+///   have an alignment of `1`. Its contents must be a protobuf-encoded `TreeState` value.
+/// - The memory referenced by `chain_state` must not be mutated for the duration of the function
+///   call.
+/// - The total size `chain_state_len` must be no larger than `isize::MAX`. See the safety
+///   documentation of pointer::offset.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zcashlc_truncate_to_chain_state(
+    db_data: *const u8,
+    db_data_len: usize,
+    chain_state: *const u8,
+    chain_state_len: usize,
+    network_id: u32,
+) -> bool {
+    let res = catch_panic(|| {
+        let network = parse_network(network_id)?;
+        let mut db_data = unsafe { wallet_db(db_data, db_data_len, network)? };
+        let chain_state =
+            TreeState::decode(unsafe { slice::from_raw_parts(chain_state, chain_state_len) })
+                .map_err(|e| anyhow!("Invalid TreeState: {}", e))?
+                .to_chain_state()?;
+
+        db_data
+            .truncate_to_chain_state(chain_state)
+            .map_err(|e| anyhow!("Error while truncating to chain state: {}", e))?;
+
+        Ok(true)
+    });
+    unwrap_exc_or(res, false)
 }
 
 /// Adds a sequence of Sapling subtree roots to the data store.
@@ -2095,9 +2155,8 @@ pub unsafe extern "C" fn zcashlc_propose_transfer(
         let (change_strategy, input_selector) = zip317_helper(None);
 
         let req = TransactionRequest::new(vec![
-            Payment::new(to, value, memo, None, None, vec![]).ok_or_else(|| {
-                anyhow!("Memos are not permitted when sending to transparent recipients.")
-            })?,
+            Payment::new(to, Some(value), memo, None, None, vec![])
+                .map_err(|e| anyhow!("Unable to construct payment: {}.", e))?,
         ])
         .map_err(|e| anyhow!("Error creating transaction request: {:?}", e))?;
 
@@ -2109,6 +2168,7 @@ pub unsafe extern "C" fn zcashlc_propose_transfer(
             &change_strategy,
             req,
             wallet::ConfirmationsPolicy::try_from(confirmations_policy)?,
+            None,
         )
         .map_err(|e| anyhow!("Error while sending funds: {}", e))?;
 
@@ -2248,6 +2308,7 @@ pub unsafe extern "C" fn zcashlc_propose_transfer_from_uri(
             &change_strategy,
             req,
             wallet::ConfirmationsPolicy::try_from(confirmations_policy)?,
+            None,
         )
         .map_err(|e| anyhow!("Error while sending funds: {}", e))?;
 
@@ -2420,7 +2481,13 @@ pub unsafe extern "C" fn zcashlc_propose_shielding(
                 let (ephemeral, non_ephemeral): (Vec<_>, Vec<_>) = account_receivers
                     .into_iter()
                     .filter(|(_, (_, balance))| balance.spendable_value() >= shielding_threshold)
-                    .partition(|(_, (scope, _))| *scope == TransparentKeyScope::EPHEMERAL);
+                    .partition(|(_, (origin, _))| {
+                        matches!(
+                            origin,
+                            TransparentKeyOrigin::Derived { scope } if *scope
+                                == TransparentKeyScope::EPHEMERAL
+                        )
+                    });
 
                 if non_ephemeral.is_empty() {
                     ephemeral
@@ -2448,6 +2515,7 @@ pub unsafe extern "C" fn zcashlc_propose_shielding(
             &from_addrs,
             account_uuid,
             confirmations_policy,
+            TransparentOutputFilter::All,
         )
         .map_err(|e| anyhow!("Error while shielding transaction: {}", e))?;
 
@@ -2549,6 +2617,7 @@ pub unsafe extern "C" fn zcashlc_create_proposed_transactions(
             &SpendingKeys::from_unified_spending_key(usk),
             OvkPolicy::Sender,
             &proposal,
+            None,
         )
         .map_err(|e| anyhow!("Error while sending funds: {}", e))?;
 
@@ -4063,13 +4132,23 @@ pub unsafe extern "C" fn zcashlc_tor_lwd_conn_check_single_use_taddr(
 // Utility functions
 //
 
-fn parse_network(value: u32) -> anyhow::Result<Network> {
+/// `network_id` value for Testnet, accepted by [`parse_network`] and every
+/// `zcashlc_*` FFI that takes a `network_id` parameter.
+pub(crate) const NETWORK_ID_TESTNET: u32 = 0;
+
+/// `network_id` value for Mainnet, accepted by [`parse_network`] and every
+/// `zcashlc_*` FFI that takes a `network_id` parameter.
+pub(crate) const NETWORK_ID_MAINNET: u32 = 1;
+
+pub(crate) fn parse_network(value: u32) -> anyhow::Result<Network> {
     match value {
-        0 => Ok(TestNetwork),
-        1 => Ok(MainNetwork),
+        NETWORK_ID_TESTNET => Ok(TestNetwork),
+        NETWORK_ID_MAINNET => Ok(MainNetwork),
         _ => Err(anyhow!(
-            "Invalid network type: {}. Expected either 0 or 1 for Testnet or Mainnet, respectively.",
-            value
+            "Invalid network type: {}. Expected either {} or {} for Testnet or Mainnet, respectively.",
+            value,
+            NETWORK_ID_TESTNET,
+            NETWORK_ID_MAINNET,
         )),
     }
 }

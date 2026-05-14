@@ -433,13 +433,89 @@ class SynchronizerOfflineTests: ZcashTestCase {
             XCTFail("Syncing is expected to be 100% (1.0) but received \(data).")
         }
     }
-    
+
+    func testSynchronizerStateZeroHasZeroFullyScannedHeight() {
+        XCTAssertEqual(SynchronizerState.zero.fullyScannedHeight, .zero)
+    }
+
+    func testSynchronizerStateInitPreservesFullyScannedHeight() {
+        let state = SynchronizerState(
+            syncSessionID: .nullID,
+            accountsBalances: [:],
+            internalSyncStatus: .syncing(0, false),
+            latestBlockHeight: 222_222,
+            fullyScannedHeight: 100_000
+        )
+
+        XCTAssertEqual(state.fullyScannedHeight, 100_000)
+    }
+
+    // Regression guard: `fullyScannedHeight` is a *separate* dimension of `SynchronizerState`
+    // from `latestBlockHeight`. Callers (e.g. shielded-vote snapshot gating) rely on receiving
+    // a state-stream update whenever `fullyScannedHeight` advances, even if no other field
+    // changes. If `Equatable` ever stops distinguishing this field — e.g. because someone
+    // reorders the stored properties so the synthesised `==` excludes it — upstream
+    // deduplication (`removeDuplicates`, `Publisher.removeDuplicates`, `CurrentValueSubject`
+    // dedup) would silently swallow those updates.
+    func testSynchronizerStateEquatableDistinguishesFullyScannedHeight() {
+        let lhs = SynchronizerState(
+            syncSessionID: .nullID,
+            accountsBalances: [:],
+            internalSyncStatus: .syncing(0.5, false),
+            latestBlockHeight: 222_222,
+            fullyScannedHeight: 100_000
+        )
+        let rhs = SynchronizerState(
+            syncSessionID: .nullID,
+            accountsBalances: [:],
+            internalSyncStatus: .syncing(0.5, false),
+            latestBlockHeight: 222_222,
+            fullyScannedHeight: 120_000
+        )
+
+        XCTAssertNotEqual(lhs, rhs)
+    }
+
+    // The public `Synchronizer.getTreeState(height:)` accessor is the whole point
+    // of exposing tree-state retrieval to app-layer code. These tests pin down the
+    // shape of the protocol requirement by exercising the Sourcery-generated
+    // `SynchronizerMock`: a regression in the requirement's signature, or in the
+    // mock generator's handling of it, would break out-of-repo consumers that
+    // mock the synchronizer in their own tests.
+    func testSynchronizerGetTreeStatePassesHeightAndReturnsConfiguredData() async throws {
+        let mock = SynchronizerMock()
+        let expectedBytes = Data([0x01, 0x02, 0x03, 0x04])
+        mock.getTreeStateHeightReturnValue = expectedBytes
+
+        let result = try await mock.getTreeState(height: 2_400_000)
+
+        XCTAssertEqual(result, expectedBytes)
+        XCTAssertEqual(mock.getTreeStateHeightCallsCount, 1)
+        XCTAssertEqual(mock.getTreeStateHeightReceivedHeight, 2_400_000)
+    }
+
+    func testSynchronizerGetTreeStatePropagatesError() async {
+        struct BoomError: Error, Equatable {}
+        let mock = SynchronizerMock()
+        mock.getTreeStateHeightThrowableError = BoomError()
+
+        do {
+            _ = try await mock.getTreeState(height: 1_234_567)
+            XCTFail("getTreeState was expected to throw")
+        } catch let error as BoomError {
+            XCTAssertEqual(error, BoomError())
+        } catch {
+            XCTFail("Unexpected error type \(error)")
+        }
+    }
+
     func synchronizerState(for internalSyncStatus: InternalSyncStatus) -> SynchronizerState {
         SynchronizerState(
             syncSessionID: .nullID,
             accountsBalances: [:],
             internalSyncStatus: internalSyncStatus,
-            latestBlockHeight: .zero
+            latestBlockHeight: .zero,
+            fullyScannedHeight: .zero
         )
     }
 }

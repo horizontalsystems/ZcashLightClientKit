@@ -4,6 +4,8 @@ use std::{env, path::PathBuf};
 
 fn main() {
     println!("cargo:rerun-if-changed=rust/src/lib.rs");
+    println!("cargo:rerun-if-changed=rust/src/voting.rs");
+    println!("cargo:rerun-if-changed=rust/src/voting");
     println!("cargo:rerun-if-changed=rust/wrapper.c");
     println!("cargo:rerun-if-changed=rust/wrapper.h");
 
@@ -60,6 +62,13 @@ fn main() {
         .rename_item("SingleUseTaddr", "FfiSingleUseTaddr")
         .rename_item("AddressCheckResult", "FfiAddressCheckResult")
         .rename_item("ZecUsdExchange", "FfiZecUsdExchange")
+        .rename_item("Eip681TransactionRequest", "FfiEip681TransactionRequest")
+        .rename_item(
+            "Eip681TransactionRequestType",
+            "FfiEip681TransactionRequestType",
+        )
+        .rename_item("Eip681NativeRequest", "FfiEip681NativeRequest")
+        .rename_item("Eip681Erc20Request", "FfiEip681Erc20Request")
         .generate()
     {
         b.write_to_file("target/Headers/zcashlc.h");

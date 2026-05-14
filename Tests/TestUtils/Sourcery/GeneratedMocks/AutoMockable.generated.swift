@@ -1439,6 +1439,75 @@ class SaplingParametersHandlerMock: SaplingParametersHandler {
     }
 
 }
+class BroadcasterMock: Broadcaster {
+
+
+    init(
+    ) {
+    }
+
+    // MARK: - createProposedTransactions
+
+    var createProposedTransactionsProposalSpendingKeyThrowableError: Error?
+    var createProposedTransactionsProposalSpendingKeyCallsCount = 0
+    var createProposedTransactionsProposalSpendingKeyCalled: Bool {
+        return createProposedTransactionsProposalSpendingKeyCallsCount > 0
+    }
+    var createProposedTransactionsProposalSpendingKeyReturnValue: [ZcashTransaction.Overview]!
+    var createProposedTransactionsProposalSpendingKeyClosure: ((Proposal, UnifiedSpendingKey) async throws -> [ZcashTransaction.Overview])?
+
+    func createProposedTransactions(proposal: Proposal, spendingKey: UnifiedSpendingKey) async throws -> [ZcashTransaction.Overview] {
+        if let error = createProposedTransactionsProposalSpendingKeyThrowableError {
+            throw error
+        }
+        createProposedTransactionsProposalSpendingKeyCallsCount += 1
+        if let closure = createProposedTransactionsProposalSpendingKeyClosure {
+            return try await closure(proposal, spendingKey)
+        } else {
+            return createProposedTransactionsProposalSpendingKeyReturnValue
+        }
+    }
+
+    // MARK: - createTransactionFromPCZT
+
+    var createTransactionFromPCZTPcztWithProofsPcztWithSigsThrowableError: Error?
+    var createTransactionFromPCZTPcztWithProofsPcztWithSigsCallsCount = 0
+    var createTransactionFromPCZTPcztWithProofsPcztWithSigsCalled: Bool {
+        return createTransactionFromPCZTPcztWithProofsPcztWithSigsCallsCount > 0
+    }
+    var createTransactionFromPCZTPcztWithProofsPcztWithSigsReturnValue: [ZcashTransaction.Overview]!
+    var createTransactionFromPCZTPcztWithProofsPcztWithSigsClosure: ((Pczt, Pczt) async throws -> [ZcashTransaction.Overview])?
+
+    func createTransactionFromPCZT(pcztWithProofs: Pczt, pcztWithSigs: Pczt) async throws -> [ZcashTransaction.Overview] {
+        if let error = createTransactionFromPCZTPcztWithProofsPcztWithSigsThrowableError {
+            throw error
+        }
+        createTransactionFromPCZTPcztWithProofsPcztWithSigsCallsCount += 1
+        if let closure = createTransactionFromPCZTPcztWithProofsPcztWithSigsClosure {
+            return try await closure(pcztWithProofs, pcztWithSigs)
+        } else {
+            return createTransactionFromPCZTPcztWithProofsPcztWithSigsReturnValue
+        }
+    }
+
+    // MARK: - submit
+
+    var submitToThrowableError: Error?
+    var submitToCallsCount = 0
+    var submitToCalled: Bool {
+        return submitToCallsCount > 0
+    }
+    var submitToClosure: ((Data, LightWalletEndpoint) async throws -> Void)?
+
+    func submit(_ rawTransaction: Data, to endpoint: LightWalletEndpoint) async throws {
+        if let error = submitToThrowableError {
+            throw error
+        }
+        submitToCallsCount += 1
+        try await submitToClosure?(rawTransaction, endpoint)
+    }
+
+}
 class SynchronizerMock: Synchronizer {
 
 
@@ -1481,6 +1550,10 @@ class SynchronizerMock: Synchronizer {
         get async { return underlyingReceivedTransactions }
     }
     var underlyingReceivedTransactions: [ZcashTransaction.Overview] = []
+    var broadcaster: Broadcaster {
+        get { return underlyingBroadcaster }
+    }
+    var underlyingBroadcaster: Broadcaster!
 
     // MARK: - prepare
 
@@ -2083,25 +2156,25 @@ class SynchronizerMock: Synchronizer {
 
     // MARK: - importAccount
 
-    var importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceThrowableError: Error?
-    var importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceCallsCount = 0
-    var importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceCalled: Bool {
-        return importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceCallsCount > 0
+    var importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceBirthdayThrowableError: Error?
+    var importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceBirthdayCallsCount = 0
+    var importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceBirthdayCalled: Bool {
+        return importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceBirthdayCallsCount > 0
     }
-    var importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceReceivedArguments: (ufvk: String, seedFingerprint: [UInt8]?, zip32AccountIndex: Zip32AccountIndex?, purpose: AccountPurpose, name: String, keySource: String?)?
-    var importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceReturnValue: AccountUUID!
-    var importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceClosure: ((String, [UInt8]?, Zip32AccountIndex?, AccountPurpose, String, String?) async throws -> AccountUUID)?
+    var importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceBirthdayReceivedArguments: (ufvk: String, seedFingerprint: [UInt8]?, zip32AccountIndex: Zip32AccountIndex?, purpose: AccountPurpose, name: String, keySource: String?, birthday: BlockHeight?)?
+    var importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceBirthdayReturnValue: AccountUUID!
+    var importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceBirthdayClosure: ((String, [UInt8]?, Zip32AccountIndex?, AccountPurpose, String, String?, BlockHeight?) async throws -> AccountUUID)?
 
-    func importAccount(ufvk: String, seedFingerprint: [UInt8]?, zip32AccountIndex: Zip32AccountIndex?, purpose: AccountPurpose, name: String, keySource: String?) async throws -> AccountUUID {
-        if let error = importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceThrowableError {
+    func importAccount(ufvk: String, seedFingerprint: [UInt8]?, zip32AccountIndex: Zip32AccountIndex?, purpose: AccountPurpose, name: String, keySource: String?, birthday: BlockHeight?) async throws -> AccountUUID {
+        if let error = importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceBirthdayThrowableError {
             throw error
         }
-        importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceCallsCount += 1
-        importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceReceivedArguments = (ufvk: ufvk, seedFingerprint: seedFingerprint, zip32AccountIndex: zip32AccountIndex, purpose: purpose, name: name, keySource: keySource)
-        if let closure = importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceClosure {
-            return try await closure(ufvk, seedFingerprint, zip32AccountIndex, purpose, name, keySource)
+        importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceBirthdayCallsCount += 1
+        importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceBirthdayReceivedArguments = (ufvk: ufvk, seedFingerprint: seedFingerprint, zip32AccountIndex: zip32AccountIndex, purpose: purpose, name: name, keySource: keySource, birthday: birthday)
+        if let closure = importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceBirthdayClosure {
+            return try await closure(ufvk, seedFingerprint, zip32AccountIndex, purpose, name, keySource, birthday)
         } else {
-            return importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceReturnValue
+            return importAccountUfvkSeedFingerprintZip32AccountIndexPurposeNameKeySourceBirthdayReturnValue
         }
     }
 
@@ -2502,6 +2575,49 @@ class SynchronizerMock: Synchronizer {
         deleteAccountCallsCount += 1
         deleteAccountReceivedAccountUUID = accountUUID
         try await deleteAccountClosure!(accountUUID)
+    }
+
+    // MARK: - rescanFrom
+
+    var rescanFromHeightThrowableError: Error?
+    var rescanFromHeightCallsCount = 0
+    var rescanFromHeightCalled: Bool {
+        return rescanFromHeightCallsCount > 0
+    }
+    var rescanFromHeightReceivedHeight: BlockHeight?
+    var rescanFromHeightClosure: ((BlockHeight) async throws -> Void)?
+
+    func rescanFrom(height: BlockHeight) async throws {
+        if let error = rescanFromHeightThrowableError {
+            throw error
+        }
+        rescanFromHeightCallsCount += 1
+        rescanFromHeightReceivedHeight = height
+        try await rescanFromHeightClosure?(height)
+    }
+
+    // MARK: - getTreeState
+
+    var getTreeStateHeightThrowableError: Error?
+    var getTreeStateHeightCallsCount = 0
+    var getTreeStateHeightCalled: Bool {
+        return getTreeStateHeightCallsCount > 0
+    }
+    var getTreeStateHeightReceivedHeight: UInt64?
+    var getTreeStateHeightReturnValue: Data!
+    var getTreeStateHeightClosure: ((UInt64) async throws -> Data)?
+
+    func getTreeState(height: UInt64) async throws -> Data {
+        if let error = getTreeStateHeightThrowableError {
+            throw error
+        }
+        getTreeStateHeightCallsCount += 1
+        getTreeStateHeightReceivedHeight = height
+        if let closure = getTreeStateHeightClosure {
+            return try await closure(height)
+        } else {
+            return getTreeStateHeightReturnValue
+        }
     }
 
 }
@@ -3338,6 +3454,25 @@ class ZcashRustBackendWeldingMock: ZcashRustBackendWelding {
         } else {
             return rewindToHeightHeightReturnValue
         }
+    }
+
+    // MARK: - truncateToChainState
+
+    var truncateToChainStateChainStateThrowableError: Error?
+    var truncateToChainStateChainStateCallsCount = 0
+    var truncateToChainStateChainStateCalled: Bool {
+        return truncateToChainStateChainStateCallsCount > 0
+    }
+    var truncateToChainStateChainStateReceivedChainState: TreeState?
+    var truncateToChainStateChainStateClosure: ((TreeState) async throws -> Void)?
+
+    func truncateToChainState(chainState: TreeState) async throws {
+        if let error = truncateToChainStateChainStateThrowableError {
+            throw error
+        }
+        truncateToChainStateChainStateCallsCount += 1
+        truncateToChainStateChainStateReceivedChainState = chainState
+        try await truncateToChainStateChainStateClosure!(chainState)
     }
 
     // MARK: - rewindCacheToHeight

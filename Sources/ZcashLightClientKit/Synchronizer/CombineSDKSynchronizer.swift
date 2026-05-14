@@ -186,7 +186,8 @@ extension CombineSDKSynchronizer: CombineSynchronizer {
         zip32AccountIndex: Zip32AccountIndex?,
         purpose: AccountPurpose,
         name: String,
-        keySource: String?
+        keySource: String?,
+        birthday: BlockHeight?
     ) async throws -> SinglePublisher<AccountUUID, Error> {
         AsyncToCombineGateway.executeThrowingAction() {
             try await self.synchronizer.importAccount(
@@ -195,7 +196,8 @@ extension CombineSDKSynchronizer: CombineSynchronizer {
                 zip32AccountIndex: zip32AccountIndex,
                 purpose: purpose,
                 name: name,
-                keySource: keySource
+                keySource: keySource,
+                birthday: birthday
             )
         }
     }
@@ -273,7 +275,15 @@ extension CombineSDKSynchronizer: CombineSynchronizer {
             try await self.synchronizer.httpRequestOverTor(for: request, retryLimit: retryLimit)
         }
     }
-    
+
+    public var broadcaster: Broadcaster { synchronizer.broadcaster }
+
     public func rewind(_ policy: RewindPolicy) -> CompletablePublisher<Error> { synchronizer.rewind(policy) }
     public func wipe() -> CompletablePublisher<Error> { synchronizer.wipe() }
+    
+    public func rescanFrom(height: BlockHeight) -> CompletablePublisher<Error> {
+        AsyncToCombineGateway.executeThrowingAction() {
+            try await self.synchronizer.rescanFrom(height: height)
+        }
+    }
 }

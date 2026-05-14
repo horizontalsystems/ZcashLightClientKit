@@ -42,6 +42,13 @@ public struct SynchronizerState: Equatable {
     public var syncStatus: SyncStatus
     /// height of the latest block on the blockchain known to this synchronizer.
     public var latestBlockHeight: BlockHeight
+    /// Height below which every block has been scanned contiguously from the wallet
+    /// birthday. Unlike `latestBlockHeight` (chain tip) or `maxScannedHeight` (head-first
+    /// scan progress), this is the only value that tells a caller "the wallet has
+    /// authoritative note and nullifier state for this height." Callers that need a
+    /// stable snapshot of balance at a specific height — e.g. voting power at a poll
+    /// snapshot — must gate on this, not on `latestBlockHeight`.
+    public var fullyScannedHeight: BlockHeight
 
     /// Represents a synchronizer that has made zero progress hasn't done a sync attempt
     public static var zero: SynchronizerState {
@@ -49,20 +56,23 @@ public struct SynchronizerState: Equatable {
             syncSessionID: .nullID,
             accountsBalances: [:],
             internalSyncStatus: .unprepared,
-            latestBlockHeight: .zero
+            latestBlockHeight: .zero,
+            fullyScannedHeight: .zero
         )
     }
-    
+
     init(
         syncSessionID: UUID,
         accountsBalances: [AccountUUID: AccountBalance],
         internalSyncStatus: InternalSyncStatus,
-        latestBlockHeight: BlockHeight
+        latestBlockHeight: BlockHeight,
+        fullyScannedHeight: BlockHeight = .zero
     ) {
         self.syncSessionID = syncSessionID
         self.accountsBalances = accountsBalances
         self.internalSyncStatus = internalSyncStatus
         self.latestBlockHeight = latestBlockHeight
+        self.fullyScannedHeight = fullyScannedHeight
         self.syncStatus = internalSyncStatus.mapToSyncStatus()
     }
 }
@@ -351,6 +361,7 @@ public protocol Synchronizer: AnyObject {
     ///   - purpose: of the account, either `spending` or `viewOnly`
     ///   - name: name of the account.
     ///   - keySource: custom optional string for clients, used for example to help identify the type of the account.
+    ///   - birthday: custom optional BlochHeight representing birthday of the imported account.
     // swiftlint:disable:next function_parameter_count
     func importAccount(
         ufvk: String,
@@ -358,10 +369,14 @@ public protocol Synchronizer: AnyObject {
         zip32AccountIndex: Zip32AccountIndex?,
         purpose: AccountPurpose,
         name: String,
-        keySource: String?
+        keySource: String?,
+        birthday: BlockHeight?
     ) async throws -> AccountUUID
 
     func fetchTxidsWithMemoContaining(searchTerm: String) async throws -> [Data]
+
+    /// Rescans from the given `BlockHeight`.
+    func rescanFrom(height: BlockHeight) async throws
 
     /// Rescans the known blocks with the current keys.
     ///
@@ -479,6 +494,19 @@ public protocol Synchronizer: AnyObject {
     ///   hex-encoded bytes otherwise.
     func debugDatabase(sql: String) -> String
 
+    /// Fetch the commitment tree state at the given block height from lightwalletd,
+    /// returned as protobuf-serialized bytes suitable for witness generation.
+    ///
+    /// Tor posture: when Tor is enabled on the Synchronizer, this uses a unique,
+    /// one-shot Tor circuit per call (`.uniqueTor`), matching the policy of
+    /// other public transport calls on this protocol (`fetchUTXOsBy`,
+    /// `checkSingleUseTransparentAddresses`, `updateTransparentAddressTransactions`).
+    /// A fresh circuit keeps each fetch unlinkable from other SDK traffic — in
+    /// particular from later `.txIdGroup`-scoped submission of a transaction
+    /// anchored at the same height. When Tor is disabled, this uses a direct
+    /// gRPC connection.
+    func getTreeState(height: UInt64) async throws -> Data
+
     /// Get an ephemeral single use transparent address
     /// - Parameter accountUUID: The account for which the single use transparent address is going to be created.
     /// - Returns The struct with an ephemeral transparent address and gap limit info
@@ -526,6 +554,101 @@ public protocol Synchronizer: AnyObject {
     ///
     /// - Throws rustDeleteAccount as a common indicator of the operation failure
     func deleteAccount(_ accountUUID: AccountUUID) async throws -> Void
+
+    /// Provides access to transaction creation and submission operations
+    /// that are decoupled from the synchronizer's built-in submission flow.
+    ///
+    /// Use this to implement custom broadcast strategies such as submitting
+    /// to multiple lightwalletd servers in parallel.
+    var broadcaster: Broadcaster { get }
+}
+
+/// Error thrown by the default `Synchronizer.getTreeState(height:)` implementation
+/// when a conformer without a lightwalletd source doesn't override it. Hoisted to
+/// file scope because Swift forbids nesting concrete types with synthesized members
+/// inside a generic function — protocol-extension methods carry an implicit `Self`
+/// and so count as generic.
+private struct GetTreeStateUnimplemented: LocalizedError {
+    var errorDescription: String? {
+        """
+        Synchronizer.getTreeState(height:) has no default implementation. \
+        Override this method in your Synchronizer conformer to provide a tree-state source.
+        """
+    }
+}
+
+/// Error thrown by the default `Synchronizer.broadcaster` implementation.
+private struct BroadcasterUnimplemented: LocalizedError {
+    var errorDescription: String? {
+        """
+        Synchronizer.broadcaster has no default implementation. \
+        Override this property in your Synchronizer conformer to provide broadcast support.
+        """
+    }
+}
+
+/// Default broadcaster used by `Synchronizer` conformers that do not override
+/// `broadcaster`.
+private final class UnimplementedBroadcaster: Broadcaster {
+    func createProposedTransactions(
+        proposal: Proposal,
+        spendingKey: UnifiedSpendingKey
+    ) async throws -> [ZcashTransaction.Overview] {
+        throw BroadcasterUnimplemented()
+    }
+
+    func createTransactionFromPCZT(
+        pcztWithProofs: Pczt,
+        pcztWithSigs: Pczt
+    ) async throws -> [ZcashTransaction.Overview] {
+        throw BroadcasterUnimplemented()
+    }
+
+    func submit(
+        _ rawTransaction: Data,
+        to endpoint: LightWalletEndpoint
+    ) async throws {
+        throw BroadcasterUnimplemented()
+    }
+}
+
+public extension Synchronizer {
+    /// Default implementation so adding `getTreeState(height:)` to the protocol is
+    /// not a source-breaking change for downstream conformers. Conformers that have
+    /// a lightwalletd connection (such as `SDKSynchronizer`) override this;
+    /// conformers that don't — mocks, stubs, alternate transports — fall through to
+    /// this default and report the feature as unavailable.
+    func getTreeState(height: UInt64) async throws -> Data {
+        throw GetTreeStateUnimplemented()
+    }
+
+    /// Default implementation so adding `broadcaster` to the protocol is not a
+    /// source-breaking change for downstream conformers. Conformers with broadcast
+    /// support override this; mocks, stubs, and alternate transports can fall
+    /// through to this default and report the feature as unavailable.
+    var broadcaster: Broadcaster {
+        UnimplementedBroadcaster()
+    }
+}
+
+public extension ClosureSynchronizer {
+    /// Default implementation so adding `broadcaster` to the protocol is not a
+    /// source-breaking change for downstream conformers. Conformers with broadcast
+    /// support override this; mocks, stubs, and alternate transports can fall
+    /// through to this default and report the feature as unavailable.
+    var broadcaster: Broadcaster {
+        UnimplementedBroadcaster()
+    }
+}
+
+public extension CombineSynchronizer {
+    /// Default implementation so adding `broadcaster` to the protocol is not a
+    /// source-breaking change for downstream conformers. Conformers with broadcast
+    /// support override this; mocks, stubs, and alternate transports can fall
+    /// through to this default and report the feature as unavailable.
+    var broadcaster: Broadcaster {
+        UnimplementedBroadcaster()
+    }
 }
 
 public enum SyncStatus: Equatable {

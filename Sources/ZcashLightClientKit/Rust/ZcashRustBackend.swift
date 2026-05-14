@@ -780,6 +780,23 @@ struct ZcashRustBackend: ZcashRustBackendWelding {
     }
 
     @DBActor
+    func truncateToChainState(chainState: TreeState) async throws {
+        let chainStateBytes = try chainState.serializedData(partial: false).bytes
+
+        let result = zcashlc_truncate_to_chain_state(
+            dbData.0,
+            dbData.1,
+            chainStateBytes,
+            UInt(chainStateBytes.count),
+            networkType.networkId
+        )
+
+        guard result else {
+            throw ZcashError.rustTruncateToChainState(lastErrorMessage(fallback: "`truncateToChainState` failed with unknown error"))
+        }
+    }
+
+    @DBActor
     func rewindCacheToHeight(height: Int32) async throws {
         let result = zcashlc_rewind_fs_block_cache_to_height(fsBlockDbRoot.0, fsBlockDbRoot.1, height)
 
@@ -1377,11 +1394,13 @@ extension FfiAccount {
                 keySource: key_source != nil ? String(cString: key_source) : nil,
                 seedFingerprint: nil,
                 hdAccountIndex: nil,
-                ufvk: nil
+                ufvk: nil,
+                uivk: nil
             )
         }
-        
+
         let ufvkTyped = ufvk.map { UnifiedFullViewingKey(validatedEncoding: String(cString: $0)) }
+        let uivkTyped = uivk.map { UnifiedIncomingViewingKey(validatedEncoding: String(cString: $0)) }
 
         // Valid ZIP32 account index
         return .init(
@@ -1390,7 +1409,8 @@ extension FfiAccount {
             keySource: key_source != nil ? String(cString: key_source) : nil,
             seedFingerprint: seedFingerprintArray,
             hdAccountIndex: Zip32AccountIndex(hd_account_index),
-            ufvk: ufvkTyped
+            ufvk: ufvkTyped,
+            uivk: uivkTyped
         )
     }
 }

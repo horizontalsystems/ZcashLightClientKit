@@ -255,6 +255,10 @@ public enum ZcashErrorCode: String {
     case rustFetchUTXOsByAddress = "ZRUST0089"
     /// Error from rust layer when calling ZcashRustBackend.deleteAccount
     case rustDeleteAccount = "ZRUST0090"
+    /// Error from rust layer when calling ZcashRustBackend.truncateToChainState
+    case rustTruncateToChainState = "ZRUST0091"
+    /// Error from rust layer when calling ZcashEip681Backend.parseTransactionRequest
+    case rustEip681Parse = "ZRUST0092"
     /// SQLite query failed when fetching all accounts from the database.
     case accountDAOGetAll = "ZADAO0001"
     /// Fetched accounts from SQLite but can't decode them.
@@ -347,6 +351,8 @@ public enum ZcashErrorCode: String {
     case spendingKeyInvalidInput = "ZWLTP0001"
     /// Can't create `UnifiedFullViewingKey` because input is invalid.
     case unifiedFullViewingKeyInvalidInput = "ZWLTP0002"
+    /// Can't create `UnifiedIncomingViewingKey` because input is invalid.
+    case unifiedIncomingViewingKeyInvalidInput = "ZWLTP0009"
     /// Can't create `SaplingExtendedFullViewingKey` because input is invalid.
     case extetendedFullViewingKeyInvalidInput = "ZWLTP0003"
     /// Can't create `TransparentAddress` because input is invalid.
@@ -429,6 +435,8 @@ public enum ZcashErrorCode: String {
     case synchronizerServerSwitch = "ZSYNCO0007"
     /// The spending key does not belong to the wallet.
     case synchronizerSpendingKeyDoesNotBelongToTheWallet = "ZSYNCO0008"
+    /// The attempt to rescan to height that is bellow sapling activation.
+    case rescanFromHeightBellowSaplingActivation = "ZSYNCO0009"
     /// Attempt to init TxId with input that is not 32 bytes.
     case txIdNot32Bytes = "ZMODEL0001"
     /// Attempt to init TxId with invalid hex encoding.

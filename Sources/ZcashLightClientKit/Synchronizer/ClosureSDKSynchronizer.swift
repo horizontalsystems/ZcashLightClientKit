@@ -99,6 +99,7 @@ extension ClosureSDKSynchronizer: ClosureSynchronizer {
         purpose: AccountPurpose,
         name: String,
         keySource: String?,
+        birthday: BlockHeight?,
         completion: @escaping (Result<AccountUUID, Error>) -> Void
     ) async throws {
         AsyncToClosureGateway.executeThrowingAction(completion) {
@@ -108,7 +109,8 @@ extension ClosureSDKSynchronizer: ClosureSynchronizer {
                 zip32AccountIndex: zip32AccountIndex,
                 purpose: purpose,
                 name: name,
-                keySource: keySource
+                keySource: keySource,
+                birthday: birthday
             )
         }
     }
@@ -273,11 +275,19 @@ extension ClosureSDKSynchronizer: ClosureSynchronizer {
             try await self.synchronizer.httpRequestOverTor(for: request, retryLimit: retryLimit)
         }
     }
-    
+
+    public var broadcaster: Broadcaster { synchronizer.broadcaster }
+
     /*
      It can be missleading that these two methods are returning Publisher even this protocol is closure based. Reason is that Synchronizer doesn't
      provide different implementations for these two methods. So Combine it is even here.
      */
     public func rewind(_ policy: RewindPolicy) -> CompletablePublisher<Error> { synchronizer.rewind(policy) }
     public func wipe() -> CompletablePublisher<Error> { synchronizer.wipe() }
+    
+    public func rescanFrom(height: BlockHeight, completion: @escaping (Error?) -> Void) {
+        AsyncToClosureGateway.executeThrowingAction(completion) {
+            try await self.synchronizer.rescanFrom(height: height)
+        }
+    }
 }

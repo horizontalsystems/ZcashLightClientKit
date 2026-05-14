@@ -122,6 +122,15 @@ struct BundleCheckpointSource: CheckpointSource {
     func estimateTimestamp(for height: BlockHeight) -> TimeInterval? {
         let blockInterval: BlockHeight = network == .mainnet ? 2500 : 10_000
         var checkpointHeight = (height / blockInterval) * blockInterval
+
+        // Ensure sapling activation is the lowest possible
+        let saplingActivationHeight = network == .mainnet
+        ? ZcashMainnet().constants.saplingActivationHeight
+        : ZcashTestnet().constants.saplingActivationHeight
+
+        if checkpointHeight < saplingActivationHeight {
+            checkpointHeight = saplingActivationHeight
+        }
         
         var checkpoint: Checkpoint?
         
@@ -136,6 +145,10 @@ struct BundleCheckpointSource: CheckpointSource {
             }
             
             checkpointHeight -= blockInterval
+            
+            if checkpointHeight < saplingActivationHeight {
+                checkpointHeight = saplingActivationHeight
+            }
         }
         
         return nil

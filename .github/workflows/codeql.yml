@@ -1,0 +1,168 @@
+# For most projects, this workflow file will not need changing; you simply need
+# to commit it to your repository.
+#
+# You may wish to alter this file to override the set of languages analyzed,
+# or to provide custom queries or build logic.
+#
+# ******** NOTE ********
+# We have attempted to detect the languages in your repository. Please check
+# the `language` matrix defined below to confirm you have the correct set of
+# supported CodeQL languages.
+#
+name: "CodeQL Advanced"
+
+# CodeQL runs on merges to main and on a weekly schedule, not on every PR.
+#
+# Rationale:
+# - The Swift matrix entry requires `build-mode: manual` (CodeQL's Swift extractor
+#   hooks the compiler), so it has to run a full Rust FFI + Swift build on a
+#   macos-15 runner. On Cargo.lock-changing PRs this is a 30-50 min cold build,
+#   per push, with no concurrency cancellation.
+# - The build-integration signal that matters at PR time (does Rust still link
+#   with Swift? do offline tests pass?) is already covered by `swift.yml` on
+#   every PR. CodeQL Swift adds static-analysis findings, not build verification.
+# - Moving CodeQL to push-to-main + weekly cadence keeps the security signal
+#   while removing a major source of PR-time CI cost.
+on:
+  push:
+    branches: [ "main" ]
+  schedule:
+    # Weekly Monday 06:00 UTC: catches new query-pack rules and dependency
+    # drift even when nobody has pushed to main.
+    - cron: '0 6 * * 1'
+  # Manual trigger: re-run between scheduled scans, e.g. after a security-
+  # relevant dependency lands and waiting until the next Monday is too long.
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      # required for all workflows
+      security-events: write
+
+      # required to fetch internal or private CodeQL packs
+      packages: read
+
+      # only required for workflows in private repositories
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - language: actions
+          build-mode: none
+          runner: ubuntu-latest
+        - language: c-cpp
+          build-mode: none
+          runner: ubuntu-latest
+        - language: rust
+          build-mode: none
+          runner: ubuntu-latest
+        - language: swift
+          build-mode: manual
+          runner: macos-15
+        # CodeQL supports the following values keywords for 'language': 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'rust', 'swift'
+        # Use `c-cpp` to analyze code written in C, C++ or both
+        # Use 'java-kotlin' to analyze code written in Java, Kotlin or both
+        # Use 'javascript-typescript' to analyze code written in JavaScript, TypeScript or both
+        # To learn more about changing the languages that are analyzed or customizing the build mode for your analysis,
+        # see https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/customizing-your-advanced-setup-for-code-scanning.
+        # If you are analyzing a compiled language, you can modify the 'build-mode' for that language to customize how
+        # your codebase is analyzed, see https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/codeql-code-scanning-for-compiled-languages
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+
+    # Initializes the CodeQL tools for scanning.
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@c10b8064de6f491fea524254123dbe5e09572f13 # v4.35.1
+      with:
+        languages: ${{ matrix.language }}
+        build-mode: ${{ matrix.build-mode }}
+        # If you wish to specify custom queries, you can do so here or in a config file.
+        # By default, queries listed here will override any specified in a config file.
+        # Prefix the list here with "+" to use these queries and those in the config file.
+
+        # For more details on CodeQL's query packs, refer to: https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors/configuring-code-scanning#using-queries-in-ql-packs
+        # queries: security-extended,security-and-quality
+
+    # --- Swift manual build steps (mirrors swift.yml) ---
+    #
+    # Swift does not support build-mode: none, and autobuild fails because
+    # Package.swift falls back to a pre-built xcframework that may lack new
+    # FFI symbols. We build the Rust FFI from source and configure LocalPackages
+    # so swift build resolves against the freshly-built xcframework.
+
+    - name: Select Xcode version
+      if: matrix.language == 'swift'
+      run: sudo xcode-select -s '/Applications/Xcode_16.0.app/Contents/Developer'
+
+    - name: Generate FFI source hash
+      if: matrix.language == 'swift'
+      id: ffi-hash
+      run: |
+        FFI_HASH=$(find rust Cargo.toml Cargo.lock BuildSupport -type f \( -name "*.rs" -o -name "*.toml" -o -name "*.lock" -o -name "Makefile" -o -name "*.h" -o -name "*.c" -o -name "*.plist" -o -name "*.modulemap" \) -exec shasum {} \; | sort | shasum | cut -d' ' -f1)
+        echo "hash=$FFI_HASH" >> $GITHUB_OUTPUT
+        echo "FFI source hash: $FFI_HASH"
+
+    - name: Cache FFI XCFramework
+      if: matrix.language == 'swift'
+      id: cache-ffi
+      uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+      with:
+        path: BuildSupport/products/libzcashlc.xcframework
+        key: ffi-xcframework-macos-only-${{ runner.os }}-${{ steps.ffi-hash.outputs.hash }}
+
+    - name: Setup Rust
+      if: matrix.language == 'swift' && steps.cache-ffi.outputs.cache-hit != 'true'
+      uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+      with:
+        toolchain: stable
+        targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+    - name: Cache Cargo
+      if: matrix.language == 'swift' && steps.cache-ffi.outputs.cache-hit != 'true'
+      uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+
+    - name: Build FFI for macOS
+      if: matrix.language == 'swift' && steps.cache-ffi.outputs.cache-hit != 'true'
+      timeout-minutes: 30
+      working-directory: ./BuildSupport
+      run: |
+        echo "Building FFI for macOS..."
+        make macos
+        mkdir -p products/libzcashlc.xcframework
+        cp -R products/macos/frameworks products/libzcashlc.xcframework/macos-arm64_x86_64
+        cp Info.plist products/libzcashlc.xcframework
+
+    - name: Configure local FFI
+      if: matrix.language == 'swift'
+      run: |
+        mkdir -p LocalPackages
+        cp -R BuildSupport/products/libzcashlc.xcframework LocalPackages/
+        cp BuildSupport/LocalPackages-Package.swift LocalPackages/Package.swift
+
+    - name: Resolve Swift dependencies
+      if: matrix.language == 'swift'
+      run: swift package resolve
+
+    - name: Build Swift package
+      if: matrix.language == 'swift'
+      timeout-minutes: 30
+      run: swift build
+
+    # --- End Swift manual build steps ---
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@c10b8064de6f491fea524254123dbe5e09572f13 # v4.35.1
+      with:
+        category: "/language:${{matrix.language}}"

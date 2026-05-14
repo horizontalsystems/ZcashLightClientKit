@@ -55,6 +55,14 @@ public class SDKSynchronizer: Synchronizer {
     private let syncSessionTicker: SessionTicker
     var latestBlocksDataProvider: LatestBlocksDataProvider
 
+    private var broadcasterStorage: Broadcaster?
+    public var broadcaster: Broadcaster {
+        guard let broadcaster = broadcasterStorage else {
+            preconditionFailure("Broadcaster accessed before initialization")
+        }
+        return broadcaster
+    }
+
     /// Creates an SDKSynchronizer instance
     /// - Parameter initializer: a wallet Initializer object
     public convenience init(initializer: Initializer) {
@@ -93,6 +101,20 @@ public class SDKSynchronizer: Synchronizer {
         self.syncSessionTicker = syncSessionTicker
         self.latestBlocksDataProvider = initializer.container.resolve(LatestBlocksDataProvider.self)
         self.sdkFlags = initializer.container.resolve(SDKFlags.self)
+
+        self.broadcasterStorage = SDKBroadcaster(
+            transactionEncoder: transactionEncoder,
+            initializer: initializer,
+            sdkFlags: sdkFlags,
+            logger: logger,
+            eventSubject: eventSubject,
+            statusCheck: { [weak self] in
+                guard let self else {
+                    throw ZcashError.synchronizerNotPrepared
+                }
+                try self.throwIfUnprepared()
+            }
+        )
 
         initializer.lightWalletService.connectionStateChange = { [weak self] oldState, newState in
             self?.connectivityStateChanged(oldState: oldState, newState: newState)
@@ -337,8 +359,19 @@ public class SDKSynchronizer: Synchronizer {
         zip32AccountIndex: Zip32AccountIndex?,
         purpose: AccountPurpose,
         name: String,
-        keySource: String?
+        keySource: String?,
+        birthday: BlockHeight? = nil
     ) async throws -> AccountUUID {
+        // Stop sync if running
+        let status = await self.status
+        var stopped = false
+        if status != .stopped && status != .disconnected {
+            await blockProcessor.stop()
+            await exchangeRateTor?.sleep()
+            await httpTor?.sleep()
+            stopped = true
+        }
+        
         // called when a new account is imported
         let chainTip = try? await UInt32(
             initializer.lightWalletService.latestBlockHeight(
@@ -352,9 +385,9 @@ public class SDKSynchronizer: Synchronizer {
             throw ZcashError.synchronizerNotPrepared
         }
         
-        let checkpoint = checkpointSource.birthday(for: BlockHeight(chainTip))
-            
-        return try await initializer.rustBackend.importAccount(
+        let checkpoint = checkpointSource.birthday(for: birthday ?? BlockHeight(chainTip))
+
+        let accountUUID = try await initializer.rustBackend.importAccount(
             ufvk: ufvk,
             seedFingerprint: seedFingerprint,
             zip32AccountIndex: zip32AccountIndex,
@@ -364,6 +397,13 @@ public class SDKSynchronizer: Synchronizer {
             name: name,
             keySource: keySource
         )
+
+        // Restart sync
+        if stopped {
+            try await start(retry: false)
+        }
+        
+        return accountUUID
     }
 
     public func proposeTransfer(accountUUID: AccountUUID, recipient: Recipient, amount: Zatoshi, memo: Memo?) async throws -> Proposal {
@@ -420,17 +460,7 @@ public class SDKSynchronizer: Synchronizer {
         proposal: Proposal,
         spendingKey: UnifiedSpendingKey
     ) async throws -> AsyncThrowingStream<TransactionSubmitResult, Error> {
-        try throwIfUnprepared()
-
-        try await SaplingParameterDownloader.downloadParamsIfnotPresent(
-            spendURL: initializer.spendParamsURL,
-            spendSourceURL: initializer.saplingParamsSourceURL.spendParamFileURL,
-            outputURL: initializer.outputParamsURL,
-            outputSourceURL: initializer.saplingParamsSourceURL.outputParamFileURL,
-            logger: logger
-        )
-
-        let transactions = try await transactionEncoder.createProposedTransactions(
+        let transactions = try await broadcaster.createProposedTransactions(
             proposal: proposal,
             spendingKey: spendingKey
         )
@@ -441,11 +471,6 @@ public class SDKSynchronizer: Synchronizer {
     func submitTransactions(_ transactions: [ZcashTransaction.Overview]) -> AsyncThrowingStream<TransactionSubmitResult, Error> {
         var iterator = transactions.makeIterator()
         var submitFailed = false
-
-        // let clients know the transaction repository changed
-        if !transactions.isEmpty {
-            eventSubject.send(.foundTransactions(transactions, nil))
-        }
         
         return AsyncThrowingStream() {
             guard let transaction = iterator.next() else { return nil }
@@ -507,22 +532,10 @@ public class SDKSynchronizer: Synchronizer {
     }
     
     public func createTransactionFromPCZT(pcztWithProofs: Pczt, pcztWithSigs: Pczt) async throws -> AsyncThrowingStream<TransactionSubmitResult, Error> {
-        try throwIfUnprepared()
-
-        try await SaplingParameterDownloader.downloadParamsIfnotPresent(
-            spendURL: initializer.spendParamsURL,
-            spendSourceURL: initializer.saplingParamsSourceURL.spendParamFileURL,
-            outputURL: initializer.outputParamsURL,
-            outputSourceURL: initializer.saplingParamsSourceURL.outputParamFileURL,
-            logger: logger
-        )
-
-        let txId = try await initializer.rustBackend.extractAndStoreTxFromPCZT(
+        let transactions = try await broadcaster.createTransactionFromPCZT(
             pcztWithProofs: pcztWithProofs,
             pcztWithSigs: pcztWithSigs
         )
-
-        let transactions = try await transactionEncoder.fetchTransactionsForTxIds([txId])
         
         return submitTransactions(transactions)
     }
@@ -660,6 +673,25 @@ public class SDKSynchronizer: Synchronizer {
         try await blockProcessor.getCustomUnifiedAddress(accountUUID: accountUUID, receivers: receivers)
     }
 
+    // MARK: Rescan
+
+    public func rescanFrom(height: BlockHeight) async throws {
+        // Ensure sapling activation is the lowest possible
+        let saplingActivationHeight = network.networkType == .mainnet
+        ? ZcashMainnet().constants.saplingActivationHeight
+        : ZcashTestnet().constants.saplingActivationHeight
+
+        guard height >= saplingActivationHeight else {
+            throw ZcashError.rescanFromHeightBellowSaplingActivation
+        }
+
+        let checkpointSource = initializer.container.resolve(CheckpointSource.self)
+
+        let checkpoint = checkpointSource.birthday(for: height)
+
+        try await initializer.rustBackend.truncateToChainState(chainState: checkpoint.treeState())
+    }
+    
     // MARK: Rewind
 
     public func rewind(_ policy: RewindPolicy) -> AnyPublisher<Void, Error> {
@@ -1028,7 +1060,15 @@ public class SDKSynchronizer: Synchronizer {
     public func debugDatabase(sql: String) -> String {
         transactionRepository.debugDatabase(sql: sql)
     }
-    
+
+    public func getTreeState(height: UInt64) async throws -> Data {
+        let treeState = try await initializer.lightWalletService.getTreeState(
+            BlockID(height: height),
+            mode: await sdkFlags.ifTor(.uniqueTor)
+        )
+        return try treeState.serializedData()
+    }
+
     public func getSingleUseTransparentAddress(accountUUID: AccountUUID) async throws -> SingleUseTransparentAddress {
         try await initializer.rustBackend.getSingleUseTransparentAddress(accountUUID: accountUUID)
     }
@@ -1204,7 +1244,8 @@ public class SDKSynchronizer: Synchronizer {
             syncSessionID: syncSession.value,
             accountsBalances: (try? await getAccountsBalances()) ?? [:],
             internalSyncStatus: status,
-            latestBlockHeight: latestBlocksDataProvider.latestBlockHeight
+            latestBlockHeight: latestBlocksDataProvider.latestBlockHeight,
+            fullyScannedHeight: latestBlocksDataProvider.fullyScannedHeight
         )
     }
 
